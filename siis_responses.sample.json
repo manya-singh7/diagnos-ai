@@ -1,0 +1,27 @@
+[
+  {
+    "query_id": "q1",
+    "domain": "Display",
+    "reference_text": "Navigate to Settings. Tap Display, then select Navigation bar. Under Navigation type, choose Swipe gestures or Buttons. If swipe gestures are unresponsive, reset the navigation bar settings or toggle Gesture hint."
+  },
+  {
+    "query_id": "q2",
+    "domain": "Battery",
+    "reference_text": "Open Settings. Tap Battery and device care, then tap Battery. Check battery usage per app. Put background apps to sleep and enable Power saving mode."
+  },
+  {
+    "query_id": "q3",
+    "domain": "Camera",
+    "reference_text": "Open Camera Settings. Scroll down and tap Reset settings. Confirm reset. If issue persists, clear Camera cache and data in Application manager."
+  },
+  {
+    "query_id": "q4",
+    "domain": "Performance",
+    "reference_text": "Open Settings. Tap Device care, then tap Memory. Tap Clean now to free up RAM. Restart device to close background rogue processes."
+  },
+  {
+    "query_id": "q5",
+    "domain": "Display",
+    "reference_text": "Open Settings. Tap Display. Turn off Adaptive brightness. Turn off Eye comfort shield. If flickering continues, test device in Safe mode."
+  }
+]

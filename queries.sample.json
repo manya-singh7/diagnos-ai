@@ -1,0 +1,32 @@
+[
+  {
+    "id": "q1",
+    "domain": "Display",
+    "query": "The mobile phone swipe navigation moves up or down instead of left or right after downloading an app"
+  },
+  {
+    "id": "q2",
+    "domain": "Battery",
+    "query": "Battery draining extremely fast since the latest software update"
+  },
+  {
+    "id": "q3",
+    "domain": "Camera",
+    "query": "Camera app crashes every time I try to switch to ultra wide lens"
+  },
+  {
+    "id": "q4",
+    "domain": "Performance",
+    "query": "Phone becomes very hot and lags when switching between apps"
+  },
+  {
+    "id": "q5",
+    "domain": "Display",
+    "query": "Screen flickers continuously when brightness is lowered"
+  },
+  {
+    "id": "q6",
+    "domain": "Battery",
+    "query": "Phone takes over 4 hours to charge with original charger"
+  }
+]

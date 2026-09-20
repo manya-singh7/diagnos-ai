@@ -1,0 +1,58 @@
+[
+  {
+    "deeplink": "bixby://masked/act/setting/display/navigation_bar",
+    "description": "Open navigation bar settings under Display",
+    "message": "choose navigation type in Display settings",
+    "qna_description": "How to change navigation buttons to swipe gestures",
+    "control_type": "radio",
+    "domain": "Display"
+  },
+  {
+    "deeplink": "bixby://masked/act/setting/battery/power_saving",
+    "description": "Turn on power saving mode",
+    "message": "activate power saving in battery settings",
+    "qna_description": "How to turn on battery power saving mode",
+    "control_type": "switch",
+    "domain": "Battery"
+  },
+  {
+    "deeplink": "bixby://masked/act/setting/battery/usage",
+    "description": "View battery usage by application",
+    "message": "check battery usage details",
+    "qna_description": "How to check which app is draining battery",
+    "control_type": "menu",
+    "domain": "Battery"
+  },
+  {
+    "deeplink": "bixby://masked/act/setting/camera/reset",
+    "description": "Reset camera settings to default",
+    "message": "reset camera app preferences",
+    "qna_description": "How to reset camera settings",
+    "control_type": "button",
+    "domain": "Camera"
+  },
+  {
+    "deeplink": "bixby://masked/act/setting/device_care/memory_clean",
+    "description": "Clean memory in Device care",
+    "message": "free up RAM in device care memory",
+    "qna_description": "How to clear background memory and speed up phone",
+    "control_type": "button",
+    "domain": "Performance"
+  },
+  {
+    "deeplink": "bixby://masked/act/setting/display/adaptive_brightness",
+    "description": "Toggle adaptive brightness in Display",
+    "message": "turn off adaptive brightness",
+    "qna_description": "How to disable automatic brightness adjustment",
+    "control_type": "switch",
+    "domain": "Display"
+  },
+  {
+    "deeplink": "bixby://dummy_positive",
+    "description": "Open general device settings placeholder",
+    "message": "navigate to unindexed settings screen",
+    "qna_description": "Fallback deeplink for valid settings screens",
+    "control_type": "generic",
+    "domain": "General"
+  }
+]
