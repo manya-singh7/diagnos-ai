@@ -549,22 +549,18 @@ def get_deeplinks(
     if is_critical and _is_critical_non_settings(combined_text):
         return None
 
-    # Parse query into specific content keywords and bigrams
-    all_q_words = re.findall(r"\b[a-z0-9'-]+\b", f"{action_name} {description}".lower())
-    q_specific = [w for w in all_q_words if w not in _DEEPLINK_STOPWORDS and w not in _GENERIC_MATCH_WORDS and len(w) > 2]
-    q_bigrams = [f"{q_specific[i]} {q_specific[i+1]}" for i in range(len(q_specific) - 1)]
+    # BM25 Retrieval via Person D's retrieval package
+    try:
+        from retrieval import get_retriever
+    except ImportError:
+        from backend.retrieval import get_retriever
 
-    catalog = _load_deeplink_catalog()
-    best_item = None
-    best_score = 0.0
-
-    for item in catalog:
-        if item.get("deeplink") == "bixby://dummy_positive":
-            continue
-        score = _score_catalog_item(q_specific, q_bigrams, item)
-        if score > best_score:
-            best_score = score
-            best_item = item
+    retriever = get_retriever()
+    matches = retriever.retrieve(f"{action_name} {description}", top_k=1)
+    if matches:
+        best_item, best_score = matches[0]
+    else:
+        best_item, best_score = None, 0.0
 
     # Rule: auto + strong match -> catalog deeplink
     if best_item and best_score >= MIN_RELEVANCE_THRESHOLD:
