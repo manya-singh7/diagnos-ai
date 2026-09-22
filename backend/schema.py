@@ -342,3 +342,32 @@ class TroubleshootRequest(BaseModel):
         if v is None:
             return None
         return scrub_urls(v)
+
+
+class HypothesisItem(BaseModel):
+    title: str
+    score: float = Field(..., ge=0.0, le=1.0)
+
+
+class ClarifyRequest(BaseModel):
+    query: str
+    hypotheses: List[HypothesisItem] = Field(default_factory=list)
+    clarification_answer: Optional[str] = None
+    gap_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
+
+    @field_validator("query")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return scrub_urls(v)
+
+    @field_validator("clarification_answer")
+    @classmethod
+    def sanitize_answer(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return scrub_urls(v)
+
+
+class ClarifyResponse(ContextDeeplinkResponse):
+    needs_clarification: bool = Field(False, description="Whether clarification question is needed")
+    question: Optional[str] = Field(None, description="One short question distinguishing the top two hypotheses")

@@ -1,0 +1,87 @@
+{
+  "contexts": [
+    {
+      "goal": "Follow these steps to perform this Swipe Navigation Troubleshooting",
+      "title": "Swipe navigation settings",
+      "score": 0.93,
+      "actions": [
+        {
+          "actionName": "Configure Navigation Bar Settings",
+          "description": "It will let you choose navigation type",
+          "category": "auto",
+          "stepGroups": [
+            {
+              "steps": [
+                "Navigate to and open Settings.",
+                "Tap on Display.",
+                "Tap on Navigation bar.",
+                "Select your preferred navigation type between Buttons and Swipe gestures.",
+                "Optionally toggle on Gesture hint to display guidance lines at the bottom of the screen."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://masked/act/setting/display/navigation_bar",
+                "description": "Open navigation bar settings under Display",
+                "message": "choose navigation type in Display settings"
+              },
+              "validationDeeplink": null
+            }
+          ]
+        },
+        {
+          "actionName": "Restart Device in Safe Mode",
+          "description": "It will disable all third party apps",
+          "category": "critical",
+          "stepGroups": [
+            {
+              "steps": [
+                "Press and hold the Power button.",
+                "Touch and hold the Power off icon.",
+                "Tap Safe mode to reboot and test gesture behavior."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://dummy_positive",
+                "description": "Open general device settings placeholder",
+                "message": "navigate to unindexed settings screen"
+              },
+              "validationDeeplink": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "goal": "Follow these steps to perform this Touch Sensitivity Configuration",
+      "title": "Touch screen sensitivity",
+      "score": 0.78,
+      "actions": [
+        {
+          "actionName": "Adjust Display Touch Sensitivity",
+          "description": "It will increase touch screen responsiveness",
+          "category": "auto",
+          "stepGroups": [
+            {
+              "steps": [
+                "Navigate to and open Settings.",
+                "Tap on Display.",
+                "Scroll down and toggle on Touch sensitivity."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://dummy_positive",
+                "description": "Open general device settings placeholder",
+                "message": "navigate to unindexed settings screen"
+              },
+              "validationDeeplink": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fallback": null,
+  "meta": {
+    "latency_ms": 185,
+    "cache_hit": false,
+    "model": "gemini-3.6-flash",
+    "cost_usd": 0.000142
+  }
+}
