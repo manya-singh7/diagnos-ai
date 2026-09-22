@@ -5,17 +5,34 @@ Frontend and client components can build against these specifications.
 
 ---
 
-## 1. GET `/health`
-Health readiness probe verifying service, LLM connectivity, and catalog loading.
+## 1. GET `/health` & `/health/details`
+Health readiness probes verifying caching layer, LLM connectivity, and deeplink catalog index.
 
-### Response `200 OK`
+### GET `/health` -> `200 OK`
+Returns HTTP 200 with exactly `{"status": "ok"}` when cache, model, and index are ready, else HTTP 503.
+```json
+{
+  "status": "ok"
+}
+```
+
+### GET `/health/details` -> `200 OK` (or `503 Unavailable`)
+Provides full component breakdown for operations and diagnostics.
 ```json
 {
   "status": "ok",
+  "cache_ready": true,
   "model_ready": true,
+  "index_ready": true,
   "catalog_ready": true
 }
 ```
+
+### Configuration: Response Shape (`RESPONSE_SHAPE`)
+Response serialization can be toggled via `RESPONSE_SHAPE` setting (default `"flat"`, per Appendix A; or `"appendix_b"` per Appendix B).
+- **Flat (Appendix A)**: Root keys are `contexts`, `fallback`, and `meta`.
+- **Appendix B**: Root keys are `query`, `query_variations` (8-10 distinct paraphrases across registers), `response` (`{"contexts": [...], "fallback": ...}`), and `meta`.
+
 
 ---
 
@@ -112,10 +129,11 @@ Processes a customer complaint and optional customer-care reference text (`siis_
 ### Contract Constraints & Guarantees
 1. **Ranked Hypotheses**: `contexts` contains up to 2 `Goal` objects ordered by confidence `score` descending.
 2. **Category Ordering**: Actions inside every goal are ordered strictly: `auto` (non-invasive settings) first $\rightarrow$ `manual` (physical cleaning/hardware) $\rightarrow$ `critical` (reboot/factory reset/safe mode) last.
-3. **Deeplink Integrity**:
-   - `auto`: Carries catalog deeplink or `bixby://dummy_positive`.
-   - `manual`: Strictly `actionableDeeplink = null`.
-   - `critical`: Carries catalog deeplink or `bixby://dummy_positive`.
+3. **Deeplink Integrity & Guardrails**:
+   - `auto`: Carries catalog deeplink if strong match (>= 0.5 relevance matched strictly on `description`, `message`, `qna_description`, never URI string); falls back to `bixby://dummy_positive` if valid Settings screen without catalog entry; otherwise `null`.
+   - `critical`: Critical operations that are not Settings screens (reboot, restart, safe mode, factory reset) carry no deeplink (`actionableDeeplink = null`).
+   - `manual`: Physical interventions strictly carry no deeplink (`actionableDeeplink = null`).
+   - **Final Response Validator**: Every actionable deeplink must be in the loaded catalog or exactly `bixby://dummy_positive`, else it is automatically stripped to `null` and logged.
 4. **Zero Web URLs**: Steps, descriptions, titles, and goals strictly contain **zero** `http`, `https`, `www.`, or markdown links.
 
 ---

@@ -371,3 +371,30 @@ class ClarifyRequest(BaseModel):
 class ClarifyResponse(ContextDeeplinkResponse):
     needs_clarification: bool = Field(False, description="Whether clarification question is needed")
     question: Optional[str] = Field(None, description="One short question distinguishing the top two hypotheses")
+
+
+class AppendixBInnerResponse(BaseModel):
+    contexts: List[Goal] = Field(default_factory=list)
+    fallback: Optional[str] = Field(None, description="Fallback flag when no match is found, e.g. 'no_match'")
+
+    @model_validator(mode="after")
+    def validate_fallback_and_contexts(self) -> "AppendixBInnerResponse":
+        if self.fallback == "no_match" and len(self.contexts) > 0:
+            raise ValueError("When fallback is 'no_match', contexts must be empty ([])")
+        return self
+
+
+class AppendixBResponse(BaseModel):
+    """Appendix B compliant response shape: query, query_variations, nested response, and meta."""
+    query: str = Field(..., description="Canonical or user query")
+    query_variations: List[str] = Field(default_factory=list, description="8 to 10 distinct paraphrases across varied registers")
+    response: AppendixBInnerResponse
+    meta: Optional[ResponseMeta] = Field(None, description="Operational metadata")
+
+    @property
+    def contexts(self) -> List[Goal]:
+        return self.response.contexts
+
+    @property
+    def fallback(self) -> Optional[str]:
+        return self.response.fallback

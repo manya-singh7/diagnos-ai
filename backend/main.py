@@ -1,16 +1,21 @@
+import concurrent.futures
 import json
+import logging
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from schema import (
     Action,
     ActionCategory,
+    AppendixBInnerResponse,
+    AppendixBResponse,
     ClarifyRequest,
     ClarifyResponse,
     ContextDeeplinkResponse,
@@ -20,11 +25,14 @@ from schema import (
     ResponseMeta,
     StepGroup,
     TroubleshootRequest,
+    contains_url,
     normalize_title,
     scrub_urls,
 )
 
 load_dotenv()
+
+logger = logging.getLogger("diagnos_ai")
 
 app = FastAPI(title="Diagnos AI - Smart Guided Troubleshooting Engine")
 
@@ -44,23 +52,99 @@ except Exception:
     gemini_client = None
 
 
-class HealthResponse(BaseModel):
+# ---------------------------------------------------------------------------
+# Global Settings & Cache Store Hook
+# ---------------------------------------------------------------------------
+
+RESPONSE_SHAPE: str = os.getenv("RESPONSE_SHAPE", "flat")
+
+try:
+    from cache import cache_store, is_cache_ready
+except ImportError:
+    try:
+        from backend.cache import cache_store, is_cache_ready
+    except ImportError:
+        def cache_store(query: str, response: Any, variations: List[str]) -> None:
+            """Pass-through stub for Person C cache store integration."""
+            pass
+
+        def is_cache_ready() -> bool:
+            return True
+
+
+# ---------------------------------------------------------------------------
+# Health Readiness Endpoints
+# ---------------------------------------------------------------------------
+
+class HealthOkResponse(BaseModel):
+    status: str = "ok"
+
+
+class HealthDetailsResponse(BaseModel):
     status: str
-    model_ready: bool = True
-    catalog_ready: bool = True
+    cache_ready: bool
+    model_ready: bool
+    index_ready: bool
+    catalog_ready: bool
 
 
-@app.get("/health", response_model=HealthResponse)
+HealthResponse = HealthOkResponse  # Backwards compatibility alias
+
+
+def _check_cache_ready() -> bool:
+    try:
+        return bool(is_cache_ready())
+    except Exception:
+        return True
+
+
+def _check_model_ready() -> bool:
+    return gemini_client is not None
+
+
+def _check_index_ready() -> bool:
+    catalog = _load_deeplink_catalog()
+    return len(catalog) > 0
+
+
+@app.get("/health", response_model=HealthOkResponse)
 def health():
     """
-    Returns HTTP 200 when service, model connections, and catalog are ready.
+    Returns exactly {"status": "ok"} with HTTP 200 when cache, model, and index are ready,
+    else HTTP 503.
     """
-    catalog = _load_deeplink_catalog()
-    return HealthResponse(
-        status="ok",
-        model_ready=gemini_client is not None,
-        catalog_ready=len(catalog) > 0,
+    cache_ready = _check_cache_ready()
+    model_ready = _check_model_ready()
+    index_ready = _check_index_ready()
+
+    if not (cache_ready and model_ready and index_ready):
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+
+    return HealthOkResponse(status="ok")
+
+
+@app.get("/health/details", response_model=HealthDetailsResponse)
+def health_details():
+    """
+    Detailed component readiness breakdown for diagnostics and monitoring.
+    """
+    cache_ready = _check_cache_ready()
+    model_ready = _check_model_ready()
+    index_ready = _check_index_ready()
+    all_ready = cache_ready and model_ready and index_ready
+
+    status_code = 200 if all_ready else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ok" if all_ready else "unavailable",
+            "cache_ready": cache_ready,
+            "model_ready": model_ready,
+            "index_ready": index_ready,
+            "catalog_ready": index_ready,
+        },
     )
+
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +212,17 @@ HARD CONSTRAINTS (Schema Rules for each Goal):
 2. title: Exactly 2 to 3 words, in Sentence case (first word capitalized, rest lowercase unless an acronym or proper noun like Wi-Fi, Bluetooth, Bixby, Samsung, Android, etc.). Example: "Swipe navigation settings", "Battery fast drain".
 3. score: Meaningful confidence float between 0.0 and 1.0 reflecting the likelihood this plan addresses the root cause. Order hypotheses with highest score first.
 4. actions: A list of discrete remediation actions:
-   - actionName: Title Case (e.g. "Configure Navigation Bar Settings"). Represents exactly one physical screen or feature.
+   - Hierarchy and Ordering: Order actions strictly least disruptive first:
+     1. Settings toggles first (e.g. configuring display settings, toggling options)
+     2. System optimizations second (e.g. cleaning memory, optimizing battery, clearing cache)
+     3. Reboots or device resets (device reboot, safe mode, factory reset) MUST always be placed last.
+   - actionName: Title Case (e.g. "Configure Navigation Bar Settings"). One action per screen: represents exactly one physical screen or feature. Do not bundle multiple screens into one action or split a single screen into multiple actions.
    - description: Exactly 5 to 7 words total, starting with the literal words "It will" (counting "It will" as the first two words). Example: "It will let you choose navigation type".
    - category: One of:
      - "auto": Standard settings screen reachable via in-app deeplink.
      - "manual": Physical intervention (cleaning ports, replacing hardware, visiting service center).
      - "critical": Disruptive or irreversible operations (factory data reset, device reboot, firmware flash, safe mode). Must be placed last.
-   - stepGroups: A list of step groups. Each contains "steps", an array of imperative UI instructions (e.g. ["Open Settings.", "Tap Display.", "Tap Navigation bar."]).
+   - stepGroups: A list of step groups. Each contains "steps", an array of imperative UI instructions (e.g. ["Open Settings.", "Tap Display.", "Tap Navigation bar."]). One physical interaction per step.
 5. ZERO URL LEAKS: Absolute prohibition of web URLs (http, https, www, domain.com, markdown links). Do NOT include any web links in any field.
 6. Return a JSON object with shape: {"goals": [<Goal 1>, <Goal 2>]} (or 1 Goal if only one viable hypothesis exists). No markdown fences or preamble."""
 
@@ -313,7 +401,7 @@ def extract_goal(
 
 
 # ---------------------------------------------------------------------------
-# Step 3: Deeplink Retrieval (Catalog Isolation) & Ordering
+# Step 3: Deeplink Retrieval (Catalog Isolation, Guards & Ordering)
 # ---------------------------------------------------------------------------
 
 _CATALOG_CACHE: Optional[List[Dict[str, Any]]] = None
@@ -323,6 +411,93 @@ _DEFAULT_DEEPLINK = Deeplink(
     description="Open general device settings placeholder",
     message="navigate to unindexed settings screen",
 )
+
+MIN_RELEVANCE_THRESHOLD = 0.5
+
+_CRITICAL_NON_SETTINGS_PATTERNS = [
+    r"\brestarts?\b",
+    r"\breboots?\b",
+    r"\bsafe\s+mode\b",
+    r"\bfactory\s+(?:data\s+)?reset\b",
+    r"\bpower\s+(?:off|cycle)\b",
+    r"\bshut\s+down\b",
+    r"\bhard\s+reset\b",
+    r"\bwipe\s+(?:cache|partition|data)\b",
+]
+
+_REAL_SETTINGS_SCREEN_PATTERNS = [
+    r"\bsettings?\b",
+    r"\bdisplay\b",
+    r"\bbattery\b",
+    r"\bsound\b",
+    r"\bvolume\b",
+    r"\bnotifications?\b",
+    r"\bwi-?fi\b",
+    r"\bbluetooth\b",
+    r"\bnetwork\b",
+    r"\bconnections?\b",
+    r"\bwallpaper\b",
+    r"\block\s*screen\b",
+    r"\bbiometrics?\b",
+    r"\bsecurity\b",
+    r"\bprivacy\b",
+    r"\blocations?\b",
+    r"\baccounts?\b",
+    r"\bapps?\b",
+    r"\bdevice\s*care\b",
+    r"\bstorage\b",
+    r"\bmemory\b",
+    r"\bbrightness\b",
+    r"\bnavigation\s*bar\b",
+    r"\btoggle\b",
+    r"\bsensitivity\b",
+    r"\baccessibility\b",
+    r"\bsoftware\s*update\b",
+]
+
+_DEEPLINK_STOPWORDS = {
+    "it", "will", "to", "and", "in", "on", "the", "a", "an", "for", "of", "with",
+    "or", "by", "at", "from", "how", "what", "which", "your", "my", "is", "are",
+    "be", "do", "does", "did", "let", "you", "open", "tap", "under", "per", "into",
+    "then", "when", "if", "this", "that", "all", "can", "adjust", "check", "set",
+}
+
+_GENERIC_MATCH_WORDS = {
+    "device", "phone", "mobile", "samsung", "galaxy", "settings", "setting",
+    "options", "option", "feature", "screen", "component", "item", "hardware",
+    "action", "troubleshooting", "configuration", "issue", "problem",
+}
+
+
+def _is_critical_non_settings(text: str) -> bool:
+    t = text.lower()
+    return any(re.search(p, t) for p in _CRITICAL_NON_SETTINGS_PATTERNS)
+
+
+def _is_real_settings_screen(text: str) -> bool:
+    t = text.lower()
+    return any(re.search(p, t) for p in _REAL_SETTINGS_SCREEN_PATTERNS)
+
+
+def _score_catalog_item(query_words: List[str], query_bigrams: List[str], item: Dict[str, Any]) -> float:
+    """
+    Match strictly on metadata: description, message, and qna_description.
+    NEVER on the URI string, and NEVER on domain.
+    """
+    cand_text = f"{item.get('description', '')} {item.get('message', '')} {item.get('qna_description', '')}".lower()
+    cand_tokens = set(re.findall(r"\b[a-z0-9'-]+\b", cand_text)) - _DEEPLINK_STOPWORDS - _GENERIC_MATCH_WORDS
+
+    if not query_words:
+        return 0.0
+
+    matched_tokens = set(query_words) & cand_tokens
+    if not matched_tokens:
+        return 0.0
+
+    overlap_ratio = len(matched_tokens) / len(set(query_words))
+    has_bigram = any(bg in cand_text for bg in query_bigrams)
+    score = overlap_ratio * 0.7 + (0.4 if has_bigram else 0.0)
+    return min(1.0, score)
 
 
 def _load_deeplink_catalog() -> List[Dict[str, Any]]:
@@ -346,36 +521,97 @@ def _load_deeplink_catalog() -> List[Dict[str, Any]]:
     return _CATALOG_CACHE
 
 
-def get_deeplinks(action_name: str, description: str = "") -> Deeplink:
+def get_deeplinks(
+    action_name: str,
+    description: str = "",
+    category: Optional[ActionCategory] = None,
+    steps: Optional[List[str]] = None,
+) -> Optional[Deeplink]:
     """
-    Single isolated retrieval function. Maps an action screen name to a catalog URI.
-    Uses deeplinks.sample.json until Person D's hybrid retrieval replaces it.
+    Single isolated retrieval function. Maps an action screen to a catalog URI or dummy_positive.
+    Strictly follows deeplink guard rules:
+    - manual -> no deeplink (None)
+    - critical action that isn't a Settings screen (restart, reboot, safe mode, factory reset) -> no deeplink (None)
+    - auto + strong match (>= MIN_RELEVANCE_THRESHOLD) -> catalog deeplink
+    - auto + no match but a real Settings screen -> bixby://dummy_positive
+    - weak match / below threshold and not a Settings screen -> no deeplink (None)
     """
+    # Rule: manual -> no deeplink
+    if category == ActionCategory.manual or str(category) == "manual":
+        return None
+
+    combined_text = f"{action_name} {description}"
+    if steps:
+        combined_text += " " + " ".join(steps)
+
+    # Rule: critical action that isn't a Settings screen -> no deeplink
+    is_critical = (category == ActionCategory.critical or str(category) == "critical")
+    if is_critical and _is_critical_non_settings(combined_text):
+        return None
+
+    # Parse query into specific content keywords and bigrams
+    all_q_words = re.findall(r"\b[a-z0-9'-]+\b", f"{action_name} {description}".lower())
+    q_specific = [w for w in all_q_words if w not in _DEEPLINK_STOPWORDS and w not in _GENERIC_MATCH_WORDS and len(w) > 2]
+    q_bigrams = [f"{q_specific[i]} {q_specific[i+1]}" for i in range(len(q_specific) - 1)]
+
     catalog = _load_deeplink_catalog()
-    query_text = f"{action_name} {description}".lower()
+    best_item = None
+    best_score = 0.0
 
     for item in catalog:
         if item.get("deeplink") == "bixby://dummy_positive":
             continue
-        keywords = [
-            item.get("description", "").lower(),
-            item.get("message", "").lower(),
-            item.get("qna_description", "").lower(),
-            item.get("domain", "").lower(),
-        ]
-        if any(kw and (kw in query_text or any(w in kw for w in query_text.split() if len(w) > 3)) for kw in keywords):
-            return Deeplink(
-                deeplink=item["deeplink"],
-                description=item.get("description", action_name),
-                message=item.get("message", ""),
-            )
+        score = _score_catalog_item(q_specific, q_bigrams, item)
+        if score > best_score:
+            best_score = score
+            best_item = item
 
-    return _DEFAULT_DEEPLINK
+    # Rule: auto + strong match -> catalog deeplink
+    if best_item and best_score >= MIN_RELEVANCE_THRESHOLD:
+        return Deeplink(
+            deeplink=best_item["deeplink"],
+            description=best_item.get("description", action_name),
+            message=best_item.get("message", ""),
+        )
+
+    # If critical and not matched to a catalog settings screen: no deeplink
+    if is_critical:
+        return None
+
+    # Rule: auto + no match but a real Settings screen -> bixby://dummy_positive
+    if _is_real_settings_screen(combined_text):
+        return _DEFAULT_DEEPLINK
+
+    # Below threshold and not a Settings screen -> no deeplink
+    return None
 
 
 # Backwards compatibility alias
-def get_deeplink(action_name: str) -> Deeplink:
+def get_deeplink(action_name: str) -> Optional[Deeplink]:
     return get_deeplinks(action_name)
+
+
+def validate_and_sanitize_deeplinks(contexts: List[Goal]) -> None:
+    """
+    Final validator on finished response: every actionableDeeplink.deeplink must be
+    in the loaded catalog or exactly bixby://dummy_positive, else it's stripped and logged.
+    """
+    catalog = _load_deeplink_catalog()
+    valid_uris = {item["deeplink"] for item in catalog if "deeplink" in item}
+    valid_uris.add("bixby://dummy_positive")
+
+    for goal in contexts:
+        for action in goal.actions:
+            for step_group in action.stepGroups:
+                if step_group.actionableDeeplink is not None:
+                    uri = step_group.actionableDeeplink.deeplink
+                    if uri not in valid_uris:
+                        logger.warning(
+                            "Stripping unauthorized deeplink URI '%s' from action '%s'",
+                            uri,
+                            action.actionName,
+                        )
+                        step_group.actionableDeeplink = None
 
 
 _CATEGORY_ORDER = {
@@ -386,15 +622,179 @@ _CATEGORY_ORDER = {
 
 
 # ---------------------------------------------------------------------------
+# Step 3b: Response Shape Serialization (Switchable)
+# ---------------------------------------------------------------------------
+
+def serialize_response(
+    contexts: List[Goal],
+    fallback: Optional[str],
+    meta: ResponseMeta,
+    query: str = "",
+    query_variations: Optional[List[str]] = None,
+    shape: Optional[str] = None,
+) -> Union[ContextDeeplinkResponse, AppendixBResponse]:
+    """
+    Put all response serialization in one function behind RESPONSE_SHAPE setting:
+    - 'flat' (default, per Appendix A): ContextDeeplinkResponse(contexts, fallback, meta)
+    - 'appendix_b' (per Appendix B): AppendixBResponse(query, query_variations, response, meta)
+    Can be switched in one line via RESPONSE_SHAPE environment variable or argument.
+    """
+    current_shape = (shape or RESPONSE_SHAPE).lower()
+    if current_shape == "appendix_b":
+        return AppendixBResponse(
+            query=query,
+            query_variations=query_variations or [],
+            response=AppendixBInnerResponse(contexts=contexts, fallback=fallback),
+            meta=meta,
+        )
+    else:  # "flat" (default, per Appendix A)
+        return ContextDeeplinkResponse(
+            contexts=contexts,
+            fallback=fallback,
+            meta=meta,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Step 3c: Query Variations Generation & Validation
+# ---------------------------------------------------------------------------
+
+QUERY_VARIATIONS_PROMPT = """You are an expert paraphrase generator for Samsung Galaxy mobile troubleshooting.
+Given a customer's troubleshooting query, generate 8 to 10 distinct paraphrases across varied registers:
+1. Formal / technical register
+2. Casual / colloquial register
+3. Keyword-only (shorthand search terms)
+4. Frustrated / urgent user phrasing
+5. Typo-inclusive (minor natural typing error or missing apostrophe)
+6. Problem-symptom focused
+7. Direct action inquiry ("how to...")
+8. Device-specific complaint
+
+CONSTRAINTS:
+1. Return a JSON object with shape: {"variations": ["...", "..."]}
+2. Exactly 8 to 10 items.
+3. Every item must be distinct, non-empty.
+4. ZERO URLs: Absolutely no web links, http/https, www, or markdown links.
+5. No markdown fences or commentary."""
+
+
+def validate_query_variations(raw_variations: List[str], base_query: str = "") -> List[str]:
+    """
+    Validates query variations:
+    - 8 to 10 items
+    - Distinct
+    - No empty strings
+    - Zero URLs
+    """
+    cleaned: List[str] = []
+    seen: set = set()
+
+    for item in raw_variations:
+        if not isinstance(item, str):
+            continue
+        scrubbed = scrub_urls(item).strip()
+        if not scrubbed or contains_url(scrubbed):
+            continue
+        norm_key = scrubbed.lower()
+        if norm_key not in seen:
+            seen.add(norm_key)
+            cleaned.append(scrubbed)
+
+    if len(cleaned) > 10:
+        cleaned = cleaned[:10]
+
+    if len(cleaned) < 8 and base_query:
+        base_clean = scrub_urls(base_query).strip()
+        defaults = [
+            f"how to fix {base_clean}",
+            f"{base_clean} samsung galaxy issue",
+            f"my phone {base_clean}",
+            f"{base_clean} troubleshooting steps",
+            f"why does {base_clean}",
+            f"{base_clean} help needed",
+            f"samsung {base_clean} not working",
+            f"guide to resolve {base_clean}",
+            f"phone problem {base_clean}",
+            f"{base_clean} error fix",
+        ]
+        for d in defaults:
+            d_clean = scrub_urls(d).strip()
+            if d_clean.lower() not in seen and not contains_url(d_clean):
+                seen.add(d_clean.lower())
+                cleaned.append(d_clean)
+            if len(cleaned) >= 8:
+                break
+
+    cleaned = cleaned[:10]
+    if not (8 <= len(cleaned) <= 10):
+        raise ValueError(f"Expected 8 to 10 distinct query variations, got {len(cleaned)}")
+
+    return cleaned
+
+
+def generate_query_variations(
+    query: str,
+    client: Optional[Any] = None,
+    model_name: str = MODEL_NAME,
+) -> Tuple[List[str], Dict[str, Any]]:
+    """
+    On a cache miss, generates 8-10 distinct paraphrases in a small Gemini call.
+    Uses same no-thinking, temperature=0, seed=42 config.
+    Validates: 8-10 items, distinct, no empty strings, zero URLs.
+    """
+    token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
+    active_client = client if client is not None else gemini_client
+
+    if active_client is None:
+        variations = validate_query_variations([], base_query=query)
+        return variations, token_usage
+
+    prompt = f'{QUERY_VARIATIONS_PROMPT}\n\nCustomer Troubleshooting Query:\n"{query}"'
+    try:
+        response = active_client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.0,
+                seed=42,
+                max_output_tokens=600,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            token_usage["prompt_tokens"] = response.usage_metadata.prompt_token_count or 0
+            token_usage["candidates_tokens"] = response.usage_metadata.candidates_token_count or 0
+
+        raw_text = response.text or "{}"
+        raw_text = re.sub(r"^```json\s*", "", raw_text)
+        raw_text = re.sub(r"\s*```$", "", raw_text)
+
+        parsed = json.loads(raw_text)
+        raw_list = (
+            parsed.get("variations", [])
+            if isinstance(parsed, dict)
+            else (parsed if isinstance(parsed, list) else [])
+        )
+        variations = validate_query_variations(raw_list, base_query=query)
+        return variations, token_usage
+    except Exception as e:
+        logger.warning("Query variations generation failed: %s, falling back to rule-based", e)
+        variations = validate_query_variations([], base_query=query)
+        return variations, token_usage
+
+
+# ---------------------------------------------------------------------------
 # Step 4: REST Endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/v1/troubleshoot", response_model=ContextDeeplinkResponse)
+@app.post("/v1/troubleshoot", response_model=Union[ContextDeeplinkResponse, AppendixBResponse])
 def troubleshoot(payload: TroubleshootRequest):
     """
     Takes a customer complaint and optional untrusted SIIS text and returns an actionable plan.
     Returns up to 2 ranked Goals in contexts, ordered by confidence score descending.
     Enforces zero URL leaks, ordering (auto -> manual -> critical), and fallback handling.
+    On a cache miss, generates 8-10 query variations in parallel and passes to cache_store.
     """
     start_time = time.perf_counter()
 
@@ -403,13 +803,45 @@ def troubleshoot(payload: TroubleshootRequest):
 
     query = enrich_query(raw_query)
 
-    goals, token_usage = extract_goals(
-        query=query,
-        siis_response=raw_siis,
-        client=gemini_client,
-        model_name=MODEL_NAME,
-        max_goals=2,
-    )
+    active_client = gemini_client
+    token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
+
+    # Parallel execution of extraction and query variations on cache miss
+    if active_client is not None:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            extract_future = executor.submit(
+                extract_goals,
+                query=query,
+                siis_response=raw_siis,
+                client=active_client,
+                model_name=MODEL_NAME,
+                max_goals=2,
+            )
+            variations_future = executor.submit(
+                generate_query_variations,
+                query=raw_query,
+                client=active_client,
+                model_name=MODEL_NAME,
+            )
+            goals, ext_tokens = extract_future.result()
+            variations, var_tokens = variations_future.result()
+            token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0) + var_tokens.get("prompt_tokens", 0)
+            token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0) + var_tokens.get("candidates_tokens", 0)
+    else:
+        goals, ext_tokens = extract_goals(
+            query=query,
+            siis_response=raw_siis,
+            client=None,
+            model_name=MODEL_NAME,
+            max_goals=2,
+        )
+        variations, var_tokens = generate_query_variations(
+            query=raw_query,
+            client=None,
+            model_name=MODEL_NAME,
+        )
+        token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0) + var_tokens.get("prompt_tokens", 0)
+        token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0) + var_tokens.get("candidates_tokens", 0)
 
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
@@ -429,25 +861,43 @@ def troubleshoot(payload: TroubleshootRequest):
 
     # Fallback if no valid goal could be constructed
     if not goals:
-        return ContextDeeplinkResponse(contexts=[], fallback="no_match", meta=meta)
+        response_obj = serialize_response(
+            contexts=[],
+            fallback="no_match",
+            meta=meta,
+            query=raw_query,
+            query_variations=variations,
+        )
+        cache_store(raw_query, response_obj, variations)
+        return response_obj
 
     # Attach deeplinks and enforce category constraints across all returned goals
     for goal in goals:
         for action in goal.actions:
-            if action.category == ActionCategory.manual:
-                # Manual physical interventions cannot carry actionable deeplinks
-                for step_group in action.stepGroups:
-                    step_group.actionableDeeplink = None
-            else:
-                deeplink = get_deeplinks(action.actionName, action.description)
-                for step_group in action.stepGroups:
-                    if not step_group.actionableDeeplink:
-                        step_group.actionableDeeplink = deeplink
+            deeplink = get_deeplinks(
+                action_name=action.actionName,
+                description=action.description,
+                category=action.category,
+                steps=action.stepGroups[0].steps if action.stepGroups else None,
+            )
+            for step_group in action.stepGroups:
+                step_group.actionableDeeplink = deeplink
 
         # Order actions within goal: auto (non-invasive) -> manual -> critical (destructive) last
         goal.actions.sort(key=lambda a: _CATEGORY_ORDER.get(a.category, 1))
 
-    return ContextDeeplinkResponse(contexts=goals, meta=meta)
+    # Final validator on finished response: every actionableDeeplink must be in catalog or dummy_positive
+    validate_and_sanitize_deeplinks(goals)
+
+    response_obj = serialize_response(
+        contexts=goals,
+        fallback=None,
+        meta=meta,
+        query=raw_query,
+        query_variations=variations,
+    )
+    cache_store(raw_query, response_obj, variations)
+    return response_obj
 
 
 @app.post("/v1/clarify", response_model=ClarifyResponse)

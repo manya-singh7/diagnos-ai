@@ -2,7 +2,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Add backend directory to sys.path
 backend_dir = Path(__file__).resolve().parent.parent / "backend"
@@ -10,19 +10,26 @@ sys.path.insert(0, str(backend_dir))
 
 from main import (
     MODEL_NAME,
+    RESPONSE_SHAPE,
     SYSTEM_PROMPT,
     app,
     build_user_prompt,
     enrich_query,
     extract_goal,
     gemini_client,
+    generate_query_variations,
     get_deeplinks,
     health,
+    health_details,
+    serialize_response,
     troubleshoot,
+    validate_and_sanitize_deeplinks,
+    validate_query_variations,
 )
 from schema import (
     Action,
     ActionCategory,
+    AppendixBResponse,
     ContextDeeplinkResponse,
     Deeplink,
     Goal,
@@ -35,7 +42,7 @@ from schema import (
 
 def run_pipeline_tests():
     print("=" * 75)
-    print("RUNNING ENDPOINT & PIPELINE TESTS (Priority 3)")
+    print("RUNNING ENDPOINT & PIPELINE TESTS (Person A)")
     print("=" * 75)
 
     results = []
@@ -48,31 +55,203 @@ def run_pipeline_tests():
             print(f"       Detail: {detail}")
 
     # -----------------------------------------------------------------------
-    # 1. GET /health Endpoint Test
+    # 1. GET /health Exact Shape & HTTP 503 on Unready + /health/details
     # -----------------------------------------------------------------------
     try:
         h_resp = health()
+        is_exact_shape = (
+            h_resp.status == "ok"
+            and getattr(h_resp, "model_dump", lambda: {})() == {"status": "ok"}
+        )
+        h_details = health_details()
+        details_body = json.loads(h_details.body.decode("utf-8")) if hasattr(h_details, "body") else h_details
+
+        with patch("main._check_model_ready", return_value=False):
+            h_unready = health()
+            unready_503 = getattr(h_unready, "status_code", None) == 503
+
         record_test(
-            "GET /health readiness report",
-            h_resp.status == "ok" and h_resp.catalog_ready,
-            f"status={h_resp.status}, model_ready={h_resp.model_ready}, catalog_ready={h_resp.catalog_ready}",
+            "GET /health: Exact shape {'status': 'ok'} (HTTP 200) and 503 when unready",
+            is_exact_shape and details_body.get("status") == "ok" and unready_503,
+            f"exact_shape={is_exact_shape} | details={details_body} | unready_status=503",
         )
     except Exception as e:
-        record_test("GET /health readiness report", False, str(e))
+        record_test("GET /health: Exact shape and 503 when unready", False, str(e))
 
     # -----------------------------------------------------------------------
-    # 2. Isolated get_deeplinks() Test
+    # 2. Deeplink Guard: Restart/Reboot never get unrelated deeplinks
     # -----------------------------------------------------------------------
     try:
-        nav_link = get_deeplinks("Configure Navigation Bar Settings", "navigation bar settings")
-        unknown_link = get_deeplinks("Unknown Hardware Component", "unindexed physical item")
+        reboot_link = get_deeplinks("Restart Device in Safe Mode", "disable third party apps", category=ActionCategory.critical)
+        restart_link = get_deeplinks("Reboot Phone", "restart Android system", category=ActionCategory.critical)
+        reset_link = get_deeplinks("Factory Data Reset", "restore to factory defaults", category=ActionCategory.critical)
+
+        all_none = (reboot_link is None) and (restart_link is None) and (reset_link is None)
         record_test(
-            "get_deeplinks: Catalog match & dummy_positive fallback",
-            "navigation_bar" in nav_link.deeplink and unknown_link.deeplink == "bixby://dummy_positive",
-            f"Matched: '{nav_link.deeplink}' | Fallback: '{unknown_link.deeplink}'",
+            "Deeplink Guard: Restart/reboot/safe mode never get unrelated deeplinks",
+            all_none,
+            f"reboot: {reboot_link}, restart: {restart_link}, reset: {reset_link}",
         )
     except Exception as e:
-        record_test("get_deeplinks: Catalog match & dummy_positive fallback", False, str(e))
+        record_test("Deeplink Guard: Restart/reboot never get unrelated deeplinks", False, str(e))
+
+    # -----------------------------------------------------------------------
+    # 3. Deeplink Guard: Weak match returns no deeplink
+    # -----------------------------------------------------------------------
+    try:
+        weak_link_1 = get_deeplinks("Unknown Hardware Component", "unindexed physical item")
+        weak_link_2 = get_deeplinks("Inspect USB Cable Connector", "clean metal port pins")
+
+        record_test(
+            "Deeplink Guard: Weak match returns no deeplink",
+            weak_link_1 is None and weak_link_2 is None,
+            f"weak_link_1: {weak_link_1}, weak_link_2: {weak_link_2}",
+        )
+    except Exception as e:
+        record_test("Deeplink Guard: Weak match returns no deeplink", False, str(e))
+
+    # -----------------------------------------------------------------------
+    # 4. Deeplink Rules: auto + strong match -> catalog, auto + Settings -> dummy_positive, manual -> None
+    # -----------------------------------------------------------------------
+    try:
+        nav_link = get_deeplinks("Configure Navigation Bar Settings", "navigation bar settings", category=ActionCategory.auto)
+        touch_link = get_deeplinks("Adjust Display Touch Sensitivity", "open touch sensitivity settings", category=ActionCategory.auto)
+        manual_link = get_deeplinks("Clean Charging Port", "clean lint with brush", category=ActionCategory.manual)
+
+        passed_rules = (
+            nav_link is not None
+            and "navigation_bar" in nav_link.deeplink
+            and touch_link is not None
+            and touch_link.deeplink == "bixby://dummy_positive"
+            and manual_link is None
+        )
+        record_test(
+            "Deeplink Rules: Catalog match, Settings dummy_positive fallback, Manual veto",
+            passed_rules,
+            f"nav: '{getattr(nav_link, 'deeplink', None)}', touch: '{getattr(touch_link, 'deeplink', None)}', manual: {manual_link}",
+        )
+    except Exception as e:
+        record_test("Deeplink Rules: Catalog match, Settings dummy_positive fallback, Manual veto", False, str(e))
+
+    # -----------------------------------------------------------------------
+    # 5. Final Deeplink Validator (Finished Response)
+    # -----------------------------------------------------------------------
+    try:
+        test_goal = Goal(
+            goal="Follow these steps to perform this Test Troubleshooting",
+            title="Test deeplink validation",
+            score=0.9,
+            actions=[
+                Action(
+                    actionName="Test Legitimate Action",
+                    description="It will configure device navigation settings",
+                    category=ActionCategory.auto,
+                    stepGroups=[
+                        StepGroup(
+                            steps=["Tap display"],
+                            actionableDeeplink=Deeplink(
+                                deeplink="bixby://masked/act/setting/display/navigation_bar",
+                                description="Legitimate catalog link",
+                            ),
+                        ),
+                        StepGroup(
+                            steps=["Tap dummy"],
+                            actionableDeeplink=Deeplink(
+                                deeplink="bixby://dummy_positive",
+                                description="Legitimate dummy positive",
+                            ),
+                        ),
+                        StepGroup(
+                            steps=["Tap rogue"],
+                            actionableDeeplink=Deeplink(
+                                deeplink="bixby://hallucinated/unauthorized/action",
+                                description="Rogue uncatalogued link",
+                            ),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        validate_and_sanitize_deeplinks([test_goal])
+        sgs = test_goal.actions[0].stepGroups
+        valid_kept = sgs[0].actionableDeeplink is not None and sgs[0].actionableDeeplink.deeplink == "bixby://masked/act/setting/display/navigation_bar"
+        dummy_kept = sgs[1].actionableDeeplink is not None and sgs[1].actionableDeeplink.deeplink == "bixby://dummy_positive"
+        rogue_stripped = sgs[2].actionableDeeplink is None
+
+        record_test(
+            "Final Validator: Uncatalogued deeplink stripped & valid/dummy kept",
+            valid_kept and dummy_kept and rogue_stripped,
+            f"legitimate={valid_kept}, dummy={dummy_kept}, rogue_stripped={rogue_stripped}",
+        )
+    except Exception as e:
+        record_test("Final Validator: Uncatalogued deeplink stripped", False, str(e))
+
+    # -----------------------------------------------------------------------
+    # 6. Query Variations Validation: 8-10 distinct, no empty, zero URLs
+    # -----------------------------------------------------------------------
+    try:
+        raw_test_variations = [
+            "phone swipe navigation is inverted",
+            "how to fix swipe gestures on galaxy",
+            "Check out https://bad-url.com for instructions",  # contains URL -> should be scrubbed
+            "",  # empty -> dropped
+            "phone swipe navigation is inverted",  # duplicate -> deduplicated
+            "swipes go up instead of left or right",
+            "navigation gestures misbehaving after update",
+            "galaxy swipe direction broken",
+            "what to do when phone scrolls wrong way",
+            "navigation bar gesture problem",
+            "swiping gestures not working",
+        ]
+        validated = validate_query_variations(raw_test_variations, base_query="swipe navigation broken")
+        has_url = any(contains_url(v) for v in validated)
+        has_empty = any(not v.strip() for v in validated)
+        is_distinct = len(set(validated)) == len(validated)
+        count_ok = 8 <= len(validated) <= 10
+
+        record_test(
+            "Query Variations: 8-10 items, distinct, no empty, zero URLs",
+            count_ok and is_distinct and not has_empty and not has_url,
+            f"count={len(validated)}, distinct={is_distinct}, zero_urls={not has_url}, no_empty={not has_empty}",
+        )
+    except Exception as e:
+        record_test("Query Variations: 8-10 items, distinct, no empty, zero URLs", False, str(e))
+
+    # -----------------------------------------------------------------------
+    # 7. Response Shape: Flat (Appendix A) vs Appendix B Switching
+    # -----------------------------------------------------------------------
+    try:
+        mock_meta = ResponseMeta(latency_ms=120, cache_hit=False, model=MODEL_NAME, cost_usd=0.0001)
+        mock_g = Goal(
+            goal="Follow these steps to perform this Swipe Navigation Troubleshooting",
+            title="Swipe navigation settings",
+            score=0.92,
+            actions=[
+                Action(
+                    actionName="Configure Navigation Bar Settings",
+                    description="It will let you choose navigation type",
+                    category=ActionCategory.auto,
+                    stepGroups=[StepGroup(steps=["Tap display"])],
+                )
+            ],
+        )
+
+        flat_resp = serialize_response([mock_g], fallback=None, meta=mock_meta, query="swipe issue", shape="flat")
+        flat_dump = flat_resp.model_dump()
+        flat_has_keys = "contexts" in flat_dump and "fallback" in flat_dump and "meta" in flat_dump and "query" not in flat_dump
+
+        app_b_resp = serialize_response([mock_g], fallback=None, meta=mock_meta, query="swipe issue", query_variations=["var 1", "var 2"], shape="appendix_b")
+        app_b_dump = app_b_resp.model_dump()
+        app_b_has_keys = "query" in app_b_dump and "query_variations" in app_b_dump and "response" in app_b_dump and "contexts" in app_b_dump["response"]
+
+        record_test(
+            "Response Shape: 'flat' (Appendix A) vs 'appendix_b' (Appendix B)",
+            flat_has_keys and app_b_has_keys,
+            f"flat_keys={list(flat_dump.keys())} | appendix_b_keys={list(app_b_dump.keys())}",
+        )
+    except Exception as e:
+        record_test("Response Shape: 'flat' vs 'appendix_b'", False, str(e))
 
     # -----------------------------------------------------------------------
     # 3. Mocked Test: Retry Loop Success (Self-Correction)
