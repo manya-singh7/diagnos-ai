@@ -28,7 +28,7 @@ Evaluated against reference ground truth scenarios across Battery, Display, Came
 | Evaluation Metric | Scale / Anchor | Score |
 | :--- | :--- | :--- |
 | Step accuracy (completeness, correctness, ordering) | 0.0 - 3.0 | 3.0 / 3.0 |
-| Deeplink relevance (exact target screen vs. parent menu) | 0.0 - 2.0 | 2.0 / 2.0 |
+| Deeplink relevance (exact target screen vs. parent menu) | 0.0 - 2.0 | 1.3 / 2.0 |
 
 ---
 
@@ -37,14 +37,14 @@ Evaluated against reference ground truth scenarios across Battery, Display, Came
 | :--- | :--- | :--- | :--- |
 | Cache hit - exact query match | <= 300 ms | < 10 ms | < 15 ms |
 | Cache hit - unseen semantic paraphrase | <= 300 ms | < 15 ms | < 25 ms |
-| Cold query - full pipeline extraction & mapping | <= 8000 ms | 1 ms | 23 ms |
+| Cold query - full pipeline extraction & mapping | <= 8000 ms | 4510 ms | 5039 ms |
 
 ---
 
 ## 4. Operational Cost & Cache Efficacy
 | Metric Item | Target | Measured Value |
 | :--- | :--- | :--- |
-| Cold query average inference cost | Tracked | $0.000057 |
+| Cold query average inference cost | Tracked | $0.000177 |
 | Cache hit inference cost | $0.00 | $0.00 |
 | Semantic cache hit rate (on unseen paraphrases) | >= 80% | 0.0% |
 | Cost derivation method | - | (prompt tokens + completion tokens) x rate |

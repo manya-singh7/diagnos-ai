@@ -183,11 +183,23 @@ def create_offline_mock_response(query: str, domain: str = "") -> str:
     return json.dumps({"goals": [template]})
 
 
+class RateLimitMonitor(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.rate_limits: List[str] = []
+
+    def emit(self, record):
+        msg = record.getMessage()
+        if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            self.rate_limits.append(msg)
+
+
 def run_evaluation(
     queries_path_str: str = "",
     output_path_str: str = "results.jsonl",
     live: bool = False,
     max_queries: int = 10,
+    delay: float = 15.0,
 ) -> Dict[str, Any]:
     queries_path, is_sample = find_queries_path(queries_path_str)
 
@@ -211,11 +223,18 @@ def run_evaluation(
     print("\n" + "=" * 75)
     print(f"DIAGNOS AI — PIPELINE EVALUATION ({'LIVE API' if live else 'OFFLINE ZERO-QUOTA'})")
     print(f"Dataset: {queries_path.name} ({total_queries} queries) | Output: {output_path_str}")
+    if live and delay > 0:
+        print(f"Pacing delay: {delay:.1f}s between queries to respect free-tier rate limits (<= 5 RPM)")
     print("=" * 75)
 
     if live and gemini_client is None:
         print("[ERROR] Live evaluation requested via --live, but GEMINI_API_KEY is not configured.")
         sys.exit(1)
+
+    # Attach rate limit monitor to loggers
+    rate_monitor = RateLimitMonitor()
+    logging.getLogger().addHandler(rate_monitor)
+    logging.getLogger("diagnos_ai").addHandler(rate_monitor)
 
     output_path = Path(output_path_str)
     # Ensure parent dir exists
@@ -225,8 +244,13 @@ def run_evaluation(
     latencies: List[int] = []
     passed_validations = 0
     total_url_leaks = 0
+    cache_hits = 0
 
     for idx, q_entry in enumerate(queries):
+        if live and idx > 0 and delay > 0:
+            print(f"--- Pacing query {idx+1}/{total_queries}: waiting {delay:.1f}s to respect free-tier rate limit ---")
+            time.sleep(delay)
+
         qid = q_entry.get("id", f"q{idx+1}")
         q_text = q_entry.get("query", "")
         domain = q_entry.get("domain", "")
@@ -270,16 +294,23 @@ def run_evaluation(
 
         effective_latency = dumped.get("meta", {}).get("latency_ms", dur_ms)
         latencies.append(effective_latency)
+        if dumped.get("meta", {}).get("cache_hit", False):
+            cache_hits += 1
 
         results_records.append(dumped)
 
         status_str = "[PASS]" if query_passed else "[FAIL]"
         contexts_cnt = len(dumped.get("response", {}).get("contexts", []))
         variations_cnt = len(dumped.get("query_variations", []))
+        hit_flag = "HIT" if dumped.get("meta", {}).get("cache_hit", False) else "MISS"
         print(
-            f"{status_str} [{qid}] ({domain or 'General'}) {q_text[:50]}... "
-            f"| Latency: {effective_latency}ms | Contexts: {contexts_cnt} | Vars: {variations_cnt}"
+            f"{status_str} [{qid}] ({domain or 'General'}) {q_text[:45]}... "
+            f"| Latency: {effective_latency}ms | Cache: {hit_flag} | Contexts: {contexts_cnt} | Vars: {variations_cnt}"
         )
+
+    # Clean up rate monitor
+    logging.getLogger().removeHandler(rate_monitor)
+    logging.getLogger("diagnos_ai").removeHandler(rate_monitor)
 
     # Write results.jsonl in Appendix B shape (one JSON object per line)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -292,6 +323,8 @@ def run_evaluation(
     p50_latency = latencies[int(n * 0.50)] if n > 0 else 0
     p95_latency = latencies[min(n - 1, int(n * 0.95))] if n > 0 else 0
     pass_rate = (passed_validations / total_queries) * 100.0 if total_queries > 0 else 0.0
+    cache_hit_rate = (cache_hits / total_queries) * 100.0 if total_queries > 0 else 0.0
+    rate_limit_occurred = len(rate_monitor.rate_limits) > 0
 
     print("\n" + "=" * 75)
     print("EVALUATION SUMMARY")
@@ -300,7 +333,9 @@ def run_evaluation(
     print(f"Schema & Gate Pass Rate:    {pass_rate:.1f}% ({passed_validations}/{total_queries})")
     print(f"P50 Latency:                {p50_latency} ms")
     print(f"P95 Latency:                {p95_latency} ms (Target <= 8000 ms)")
+    print(f"Cache Hit Rate:             {cache_hit_rate:.1f}% ({cache_hits}/{total_queries})")
     print(f"Total URL Leaks Detected:   {total_url_leaks}")
+    print(f"HTTP 429 Rate Limits:       {'YES (' + str(len(rate_monitor.rate_limits)) + ' detected)' if rate_limit_occurred else 'None (0 detected)'}")
     print(f"Results Written:            {output_path.resolve()}")
     if is_sample:
         print("[NOTE] Evaluation was performed on sample queries and sample deeplinks.")
@@ -312,6 +347,8 @@ def run_evaluation(
         "total": total_queries,
         "p50_latency_ms": p50_latency,
         "p95_latency_ms": p95_latency,
+        "cache_hit_rate": cache_hit_rate,
+        "rate_limits_detected": len(rate_monitor.rate_limits),
         "url_leaks": total_url_leaks,
         "is_sample": is_sample,
         "output_file": str(output_path),
@@ -324,6 +361,7 @@ def main():
     parser.add_argument("--output", type=str, default="results.jsonl", help="Output results.jsonl file")
     parser.add_argument("--live", action="store_true", help="Execute live calls against Gemini API (max 6 calls)")
     parser.add_argument("--max-queries", type=int, default=6, help="Maximum number of queries to evaluate")
+    parser.add_argument("--delay", type=float, default=15.0, help="Delay in seconds between live queries (default: 15.0)")
     args = parser.parse_args()
 
     run_evaluation(
@@ -331,6 +369,7 @@ def main():
         output_path_str=args.output,
         live=args.live,
         max_queries=args.max_queries,
+        delay=args.delay,
     )
 
 
