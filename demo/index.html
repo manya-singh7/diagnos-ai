@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnos AI — Smart Guided Troubleshooting Engine</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --auto-bg: rgba(16, 185, 129, 0.15);
+      --auto-border: #10b981;
+      --auto-text: #34d399;
+      --manual-bg: rgba(245, 158, 11, 0.15);
+      --manual-border: #f59e0b;
+      --manual-text: #fbbf24;
+      --critical-bg: rgba(239, 68, 68, 0.15);
+      --critical-border: #ef4444;
+      --critical-text: #f87171;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 680px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    header {
+      text-align: center;
+      padding-bottom: 8px;
+    }
+
+    .badge-top {
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+
+    p.subtitle {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    /* Card styling */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Samples Bar */
+    .samples-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .samples-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .sample-pill {
+      background: #334155;
+      color: #cbd5e1;
+      border: 1px solid #475569;
+      border-radius: 9999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .sample-pill:hover {
+      background: #475569;
+      color: #ffffff;
+      border-color: #64748b;
+    }
+
+    /* Input area */
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 12px;
+      color: #ffffff;
+      font-size: 14px;
+      resize: vertical;
+      min-height: 80px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    textarea:focus {
+      border-color: var(--primary);
+    }
+
+    /* Button Controls Row */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #ffffff;
+      flex: 1;
+      min-width: 140px;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .btn-secondary {
+      background: #334155;
+      color: #e2e8f0;
+      border: 1px solid #475569;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #475569;
+      color: #ffffff;
+    }
+
+    .btn-mic.recording {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: #ef4444;
+      color: #f87171;
+      animation: pulse-red 1.5s infinite;
+    }
+
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Image Preview */
+    .image-preview-container {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 10px;
+      background: #0f172a;
+      border: 1px dashed var(--card-border);
+      border-radius: 8px;
+      margin-top: 8px;
+    }
+
+    .image-preview-container img {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid #334155;
+    }
+
+    .image-details {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .btn-remove-img {
+      background: transparent;
+      color: #ef4444;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .btn-remove-img:hover {
+      text-decoration: underline;
+    }
+
+    /* Status & Loading */
+    .status-msg {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      min-height: 18px;
+    }
+
+    .loading-box {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 32px 16px;
+      text-align: center;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #334155;
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      font-size: 15px;
+      font-weight: 500;
+      color: #cbd5e1;
+    }
+
+    .loading-timer {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Meta Telemetry Bar */
+    .telemetry-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      gap: 8px;
+    }
+
+    .telemetry-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .telemetry-val {
+      color: #f1f5f9;
+      font-weight: 600;
+    }
+
+    .cache-badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .cache-hit {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+    }
+
+    .cache-miss {
+      background: rgba(148, 163, 184, 0.15);
+      color: #94a3b8;
+    }
+
+    /* Results section */
+    .results-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .goal-card {
+      background: #1e293b;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .goal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 12px;
+    }
+
+    .goal-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .score-badge {
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .goal-instruction {
+      font-size: 14px;
+      color: #cbd5e1;
+      line-height: 1.4;
+    }
+
+    /* Actions List */
+    .actions-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .action-item {
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .action-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .category-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .category-auto {
+      background: var(--auto-bg);
+      border: 1px solid var(--auto-border);
+      color: var(--auto-text);
+    }
+
+    .category-manual {
+      background: var(--manual-bg);
+      border: 1px solid var(--manual-border);
+      color: var(--manual-text);
+    }
+
+    .category-critical {
+      background: var(--critical-bg);
+      border: 1px solid var(--critical-border);
+      color: var(--critical-text);
+    }
+
+    .action-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #ffffff;
+      flex: 1;
+    }
+
+    .action-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .steps-list {
+      margin-left: 20px;
+      font-size: 13px;
+      color: #cbd5e1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .steps-list li {
+      line-height: 1.4;
+    }
+
+    /* Deeplink Button */
+    .deeplink-btn {
+      align-self: flex-start;
+      margin-top: 4px;
+      background: #1e3a8a;
+      color: #bfdbfe;
+      border: 1px solid #3b82f6;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s ease;
+    }
+
+    .deeplink-btn:hover {
+      background: #1d4ed8;
+      color: #ffffff;
+    }
+
+    .deeplink-btn:active {
+      transform: scale(0.98);
+    }
+
+    .deeplink-uri {
+      font-size: 11px;
+      color: #93c5fd;
+      opacity: 0.8;
+      font-family: monospace;
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #334155;
+      color: #ffffff;
+      border: 1px solid #475569;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+      transition: transform 0.25s ease;
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Fallback / No Match Notice */
+    .no-match-box {
+      text-align: center;
+      padding: 28px 16px;
+      color: var(--text-muted);
+    }
+
+    .no-match-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+
+    .no-match-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #e2e8f0;
+      margin-bottom: 4px;
+    }
+
+    .no-match-desc {
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <div class="badge-top">Samsung Galaxy PRISM Demo</div>
+      <h1>Diagnos AI</h1>
+      <p class="subtitle">Smart Guided Troubleshooting Engine — Text, Voice & Vision Input</p>
+    </header>
+
+    <!-- Query Input Card -->
+    <div class="card">
+      <!-- Quick sample queries -->
+      <div class="samples-bar">
+        <span class="samples-label">Quick Samples:</span>
+        <button type="button" class="sample-pill" data-query="The mobile phone swipe navigation moves up or down instead of left or right after downloading an app">Swipe Inverted</button>
+        <button type="button" class="sample-pill" data-query="Battery draining extremely fast since the latest software update">Battery Fast Drain</button>
+        <button type="button" class="sample-pill" data-query="Camera app crashes every time I try to switch to ultra wide lens">Camera Crash</button>
+        <button type="button" class="sample-pill" data-query="Phone becomes very hot and lags when switching between apps">Lag & Overheat</button>
+      </div>
+
+      <div class="input-group">
+        <textarea id="queryInput" placeholder="Describe the device issue (e.g., 'Screen flickers when brightness is lowered', 'Phone won't charge')..."></textarea>
+
+        <!-- Hidden file input for photo upload -->
+        <input type="file" id="imageInput" accept="image/*" style="display: none;">
+
+        <!-- Image preview container -->
+        <div id="imagePreviewContainer" class="image-preview-container">
+          <img id="imagePreview" alt="Problem preview">
+          <div class="image-details" id="imageDetails">photo.jpg</div>
+          <button type="button" class="btn-remove-img" id="btnRemoveImg">✕ Remove</button>
+        </div>
+
+        <div class="controls-row">
+          <button type="button" class="btn-secondary" id="btnUploadPhoto" title="Attach device photo">
+            📷 Photo
+          </button>
+          <button type="button" class="btn-secondary btn-mic" id="btnMic" title="Voice dictation">
+            🎤 Speak
+          </button>
+          <button type="button" class="btn-primary" id="btnSubmit">
+            Diagnose Issue
+          </button>
+        </div>
+
+        <div class="status-msg" id="statusMsg"></div>
+      </div>
+    </div>
+
+    <!-- Loading Box -->
+    <div class="card loading-box" id="loadingBox">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loadingText">Diagnosing issue with Gemini AI...</div>
+      <div class="loading-timer" id="loadingTimer">Elapsed: 0.0s</div>
+    </div>
+
+    <!-- Telemetry Bar -->
+    <div class="telemetry-bar" id="telemetryBar">
+      <div class="telemetry-item">
+        <span>⚡ Latency:</span>
+        <span class="telemetry-val" id="metaLatency">-</span>
+      </div>
+      <div class="telemetry-item">
+        <span>💾 Cache:</span>
+        <span class="cache-badge" id="metaCache">-</span>
+      </div>
+      <div class="telemetry-item">
+        <span>🤖 Model:</span>
+        <span class="telemetry-val" id="metaModel">-</span>
+      </div>
+      <div class="telemetry-item">
+        <span>💲 Cost:</span>
+        <span class="telemetry-val" id="metaCost">-</span>
+      </div>
+    </div>
+
+    <!-- Results Container -->
+    <div class="results-container" id="resultsContainer"></div>
+  </div>
+
+  <!-- Toast element for simulated deeplink clicks -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const BACKEND_BASE = "http://localhost:8000";
+
+    const queryInput = document.getElementById("queryInput");
+    const imageInput = document.getElementById("imageInput");
+    const imagePreviewContainer = document.getElementById("imagePreviewContainer");
+    const imagePreview = document.getElementById("imagePreview");
+    const imageDetails = document.getElementById("imageDetails");
+    const btnRemoveImg = document.getElementById("btnRemoveImg");
+    const btnUploadPhoto = document.getElementById("btnUploadPhoto");
+    const btnMic = document.getElementById("btnMic");
+    const btnSubmit = document.getElementById("btnSubmit");
+    const statusMsg = document.getElementById("statusMsg");
+
+    const loadingBox = document.getElementById("loadingBox");
+    const loadingText = document.getElementById("loadingText");
+    const loadingTimer = document.getElementById("loadingTimer");
+
+    const telemetryBar = document.getElementById("telemetryBar");
+    const metaLatency = document.getElementById("metaLatency");
+    const metaCache = document.getElementById("metaCache");
+    const metaModel = document.getElementById("metaModel");
+    const metaCost = document.getElementById("metaCost");
+
+    const resultsContainer = document.getElementById("resultsContainer");
+    const toast = document.getElementById("toast");
+
+    let selectedImageFile = null;
+    let timerInterval = null;
+    let recognition = null;
+    let isRecording = false;
+
+    // Toast feedback
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      setTimeout(() => {
+        toast.classList.remove("show");
+      }, 3000);
+    }
+
+    // Set status message
+    function setStatus(text, isError = false) {
+      statusMsg.textContent = text;
+      statusMsg.style.color = isError ? "#f87171" : "#94a3b8";
+    }
+
+    // Sample Pills Click
+    document.querySelectorAll(".sample-pill").forEach(pill => {
+      pill.addEventListener("click", () => {
+        queryInput.value = pill.getAttribute("data-query");
+        clearImage();
+        setStatus("Sample query loaded. Click 'Diagnose Issue' to run.");
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // PART 2: Web Speech API Integration
+    // -----------------------------------------------------------------------
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        isRecording = true;
+        btnMic.classList.add("recording");
+        btnMic.innerHTML = "⏹ Listening...";
+        setStatus("Listening for your complaint... Speak into your microphone.");
+      };
+
+      recognition.onresult = (event) => {
+        let transcript = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        queryInput.value = transcript;
+      };
+
+      recognition.onerror = (event) => {
+        isRecording = false;
+        btnMic.classList.remove("recording");
+        btnMic.innerHTML = "🎤 Speak";
+        setStatus(`Voice error: ${event.error}. Please try again or type complaint.`, true);
+      };
+
+      recognition.onend = () => {
+        isRecording = false;
+        btnMic.classList.remove("recording");
+        btnMic.innerHTML = "🎤 Speak";
+        if (queryInput.value.trim()) {
+          setStatus("Voice captured! Review your complaint and click 'Diagnose Issue'.");
+        } else {
+          setStatus("");
+        }
+      };
+
+      btnMic.addEventListener("click", () => {
+        if (isRecording) {
+          recognition.stop();
+        } else {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.error("Speech start error:", e);
+          }
+        }
+      });
+    } else {
+      btnMic.addEventListener("click", () => {
+        alert("Web Speech API is not supported in this browser. Please use Google Chrome or Microsoft Edge for voice input.");
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // PART 3: Photo Upload Flow
+    // -----------------------------------------------------------------------
+    btnUploadPhoto.addEventListener("click", () => {
+      imageInput.click();
+    });
+
+    imageInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        selectedImageFile = file;
+        imageDetails.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          imagePreview.src = event.target.result;
+          imagePreviewContainer.style.display = "flex";
+        };
+        reader.readAsDataURL(file);
+        setStatus("Photo selected! Click 'Diagnose Issue' to analyze with Gemini Vision.");
+      }
+    });
+
+    btnRemoveImg.addEventListener("click", clearImage);
+
+    function clearImage() {
+      selectedImageFile = null;
+      imageInput.value = "";
+      imagePreview.src = "";
+      imagePreviewContainer.style.display = "none";
+    }
+
+    // -----------------------------------------------------------------------
+    // PART 1: Submit & Rendering Pipeline
+    // -----------------------------------------------------------------------
+    btnSubmit.addEventListener("click", submitDiagnosis);
+    queryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        submitDiagnosis();
+      }
+    });
+
+    function showLoading(msg = "Diagnosing issue with Gemini AI...") {
+      loadingText.textContent = msg;
+      loadingBox.style.display = "flex";
+      resultsContainer.innerHTML = "";
+      telemetryBar.style.display = "none";
+      btnSubmit.disabled = true;
+
+      const start = performance.now();
+      timerInterval = setInterval(() => {
+        const sec = ((performance.now() - start) / 1000).toFixed(1);
+        loadingTimer.textContent = `Elapsed: ${sec}s`;
+      }, 100);
+    }
+
+    function hideLoading() {
+      clearInterval(timerInterval);
+      loadingBox.style.display = "none";
+      btnSubmit.disabled = false;
+    }
+
+    async function submitDiagnosis() {
+      const textQuery = queryInput.value.trim();
+
+      if (!textQuery && !selectedImageFile) {
+        setStatus("Please type a complaint, speak into the mic, or attach a device photo.", true);
+        queryInput.focus();
+        return;
+      }
+
+      setStatus("");
+
+      try {
+        let response;
+        if (selectedImageFile) {
+          // Send image to /v1/troubleshoot-image
+          showLoading("Analyzing device photo with Gemini Vision...");
+          const formData = new FormData();
+          formData.append("file", selectedImageFile);
+
+          response = await fetch(`${BACKEND_BASE}/v1/troubleshoot-image`, {
+            method: "POST",
+            body: formData,
+          });
+        } else {
+          // Send text complaint to /v1/troubleshoot
+          showLoading("Diagnosing issue with Gemini AI...");
+          response = await fetch(`${BACKEND_BASE}/v1/troubleshoot`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: jsonPayload(textQuery),
+          });
+        }
+
+        if (!response.ok) {
+          throw new Error(`Server returned HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        renderResponse(data);
+      } catch (err) {
+        console.error("Diagnosis error:", err);
+        renderError(err.message);
+      } finally {
+        hideLoading();
+      }
+    }
+
+    function jsonPayload(text) {
+      return JSON.stringify({ query: text });
+    }
+
+    function renderError(errMsg) {
+      telemetryBar.style.display = "none";
+      resultsContainer.innerHTML = `
+        <div class="card no-match-box">
+          <div class="no-match-icon">⚠️</div>
+          <div class="no-match-title">Something went wrong</div>
+          <div class="no-match-desc">
+            ${errMsg}<br>
+            <small style="color: #64748b; margin-top: 8px; display: inline-block;">
+              Make sure the backend is running at <code>${BACKEND_BASE}</code> (e.g. <code>uvicorn backend.main:app --port 8000</code>).
+            </small>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderResponse(data) {
+      // Extract contexts, fallback, and meta across both Flat and Appendix B shapes
+      let contexts = [];
+      let fallback = null;
+      let meta = data.meta || {};
+
+      if (data.response && Array.isArray(data.response.contexts)) {
+        // Appendix B shape
+        contexts = data.response.contexts;
+        fallback = data.response.fallback;
+      } else if (Array.isArray(data.contexts)) {
+        // Flat shape
+        contexts = data.contexts;
+        fallback = data.fallback;
+      }
+
+      // Render Telemetry Bar
+      metaLatency.textContent = `${meta.latency_ms ?? 0} ms`;
+      metaModel.textContent = meta.model || "gemini-3.6-flash";
+      metaCost.textContent = `$${(meta.cost_usd || 0).toFixed(6)}`;
+
+      if (meta.cache_hit) {
+        metaCache.textContent = "HIT";
+        metaCache.className = "cache-badge cache-hit";
+      } else {
+        metaCache.textContent = "MISS";
+        metaCache.className = "cache-badge cache-miss";
+      }
+      telemetryBar.style.display = "flex";
+
+      // Case: No match / fallback
+      if (fallback === "no_match" || fallback === "no_siis_context" || contexts.length === 0) {
+        resultsContainer.innerHTML = `
+          <div class="card no-match-box">
+            <div class="no-match-icon">🔍</div>
+            <div class="no-match-title">No matching troubleshooting plan found</div>
+            <div class="no-match-desc">
+              The engine analyzed the complaint but could not confirm a high-confidence remediation in the catalog.<br>
+              Try phrasing with specific hardware or settings symptoms (e.g., 'swipe navigation', 'battery drain', 'camera reset').
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      // Render Ranked Goals
+      let html = "";
+      contexts.forEach((goal, gIdx) => {
+        const scorePct = Math.round((goal.score || 0) * 100);
+
+        html += `
+          <div class="goal-card">
+            <div class="goal-header">
+              <div>
+                <div class="goal-title">Hypothesis ${gIdx + 1}: ${escapeHtml(goal.title)}</div>
+                <div class="goal-instruction">${escapeHtml(goal.goal)}</div>
+              </div>
+              <div class="score-badge">Confidence: ${scorePct}%</div>
+            </div>
+
+            <div class="actions-list">
+        `;
+
+        (goal.actions || []).forEach((act) => {
+          const cat = (act.category || "manual").toLowerCase();
+          const catClass = `category-${cat}`;
+          const catLabel = cat === "auto" ? "AUTO · In-App Settings" : (cat === "critical" ? "CRITICAL · Reset/Reboot" : "MANUAL · Physical Check");
+
+          let stepsHtml = "";
+          let deeplinkObj = null;
+
+          (act.stepGroups || []).forEach(sg => {
+            (sg.steps || []).forEach(step => {
+              stepsHtml += `<li>${escapeHtml(step)}</li>`;
+            });
+            if (sg.actionableDeeplink) {
+              deeplinkObj = sg.actionableDeeplink;
+            }
+          });
+
+          let deeplinkButtonHtml = "";
+          if (deeplinkObj) {
+            deeplinkButtonHtml = `
+              <button type="button" class="deeplink-btn" onclick="handleDeeplinkClick('${escapeHtml(deeplinkObj.deeplink)}')">
+                <span>⚙️ Open in Settings</span>
+                <span class="deeplink-uri">(${escapeHtml(deeplinkObj.deeplink)})</span>
+              </button>
+            `;
+          }
+
+          html += `
+            <div class="action-item">
+              <div class="action-header">
+                <span class="category-badge ${catClass}">${catLabel}</span>
+                <span class="action-name">${escapeHtml(act.actionName)}</span>
+              </div>
+              <div class="action-desc">${escapeHtml(act.description)}</div>
+              <ol class="steps-list">
+                ${stepsHtml}
+              </ol>
+              ${deeplinkButtonHtml}
+            </div>
+          `;
+        });
+
+        html += `
+            </div>
+          </div>
+        `;
+      });
+
+      resultsContainer.innerHTML = html;
+    }
+
+    window.handleDeeplinkClick = function(uri) {
+      showToast(`📱 Simulated One UI Deep Link: ${uri}`);
+    };
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>

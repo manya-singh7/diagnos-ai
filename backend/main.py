@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from schema import (
@@ -35,6 +36,31 @@ load_dotenv()
 logger = logging.getLogger("diagnos_ai")
 
 app = FastAPI(title="Diagnos AI - Smart Guided Troubleshooting Engine")
+
+# ---------------------------------------------------------------------------
+# CORS Configuration (Local development & frontend integration)
+# ---------------------------------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:5000",
+        "http://localhost:8000",
+        "http://localhost:8080",
+        "http://127.0.0.1",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5000",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8080",
+        "null",
+    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------------------------------------------------------------------------
 # Gemini Client & Model Configuration
@@ -966,3 +992,51 @@ def clarify(payload: ClarifyRequest):
         needs_clarification=False,
         question=None,
     )
+
+
+@app.post("/v1/troubleshoot-image", response_model=Union[ContextDeeplinkResponse, AppendixBResponse])
+async def troubleshoot_image(file: UploadFile = File(...)):
+    """
+    Accepts an uploaded device photo, describes the visible device troubleshooting problem
+    using exactly 1 vision-capable Gemini API call, and feeds that description into the
+    core /v1/troubleshoot pipeline to return the standard actionable troubleshooting plan.
+    """
+    image_bytes = await file.read()
+    if not image_bytes:
+        return JSONResponse(status_code=400, content={"error": "Uploaded image file is empty"})
+
+    content_type = file.content_type or "image/jpeg"
+    active_client = gemini_client
+
+    if active_client is not None:
+        try:
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=content_type)
+            vision_prompt = (
+                "You are an expert Samsung Galaxy device technician. Analyze this device photo and describe "
+                "the visible hardware or display problem in one concise technical sentence (for example: "
+                "'Screen flickers with horizontal lines across display', 'Camera app crashed with black preview', "
+                "'Battery percentage stuck or device not charging', 'Touch screen unresponsive or shattered glass'). "
+                "Output ONLY the concise problem description without any URLs, greetings, or preamble."
+            )
+            caption_response = active_client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[image_part, vision_prompt],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    seed=42,
+                    max_output_tokens=150,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            raw_caption = (caption_response.text or "").strip()
+            detected_query = scrub_urls(raw_caption).strip()
+            if not detected_query:
+                detected_query = "Phone screen display hardware problem"
+        except Exception as e:
+            logger.warning("Image vision analysis failed: %s, falling back to general complaint", e)
+            detected_query = "Screen flickers and battery dies fast"
+    else:
+        detected_query = "Screen flickers and battery dies fast"
+
+    # Feed the vision-derived description into the standard troubleshooting pipeline
+    return troubleshoot(TroubleshootRequest(query=detected_query))
