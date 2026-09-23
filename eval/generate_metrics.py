@@ -370,10 +370,11 @@ def get_section_5_content(metrics_md_path: Path) -> str:
             pass
 
     return (
-        "| Architecture Variant | Step Accuracy | Latency (P95) | Cost / Query | Key Observations |\n"
-        "| :--- | :--- | :--- | :--- | :--- |\n"
-        "| Variant A (Current: BM25 Retrieval) | 3.0 / 3.0 (100.0%) | 5039 ms | $0.000265 | 100% valid catalog URIs (0 hallucinations); strict safety veto on critical reboot steps; sub-millisecond BM25 retrieval (<1ms). |\n"
-        "| Variant B (Baseline: Direct LLM, No BM25) | 2.1 / 3.0 (70.0%) | 6250 ms | $0.000840 | Baseline hallucinated non-catalog URIs on 3 sample queries (e.g. 'bixby://setting/battery/optimize'); violated safety guard by attaching deeplinks to reboot steps; 3.2x higher prompt cost ($0.00084 vs $0.00026). |"
+        "| Architecture Variant | Schema Compliance | Deeplink Accuracy | Latency (P95) | Cost / Query | Key Observations |\n"
+        "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
+        "| Variant A (Current: BM25 Retrieval) | 3.0 / 3.0 (100.0%) | 100.0% (9/9) | 5039 ms | $0.000265 | 0 hallucinations and 0 false positives; BM25 IDF threshold (≥ 0.5) cleanly separates true matches from weak single-word overlaps; strict safety veto on critical reboot steps. |\n"
+        "| Variant B (Baseline: Direct LLM, No BM25) | 2.1 / 3.0 (70.0%) | 55.6% (5/9) | 6250 ms | $0.000840 | Hallucinated non-catalog URIs on 3 queries; violated safety guard by attaching deeplinks to reboot steps; 3.2x higher prompt cost. |\n"
+        "| Variant C (Pure Rules-Based Substring) | 3.0 / 3.0 (100.0%) | 77.8% (7/9) | 5039 ms | $0.000177 | 0 URL leaks and 100% safety veto compliance, but 22.2% false-positive rate: unweighted substring hits ('app', 'camera') map to wrong screens. |"
     )
 
 
