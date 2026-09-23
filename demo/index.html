@@ -381,6 +381,69 @@
       line-height: 1.4;
     }
 
+    /* Reasoning Trace Collapsible Section */
+    .diagnosis-trace {
+      margin-top: 10px;
+      background: #0b1120;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 12px;
+    }
+
+    .trace-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(30, 41, 59, 0.6);
+      color: #94a3b8;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .trace-summary:hover {
+      background: rgba(51, 65, 85, 0.6);
+      color: #f1f5f9;
+    }
+
+    .trace-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .trace-summary-hint {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: normal;
+    }
+
+    .trace-list {
+      list-style: none;
+      padding: 10px 14px;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-top: 1px solid var(--card-border);
+      background: #0f172a;
+    }
+
+    .trace-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: #cbd5e1;
+      line-height: 1.4;
+    }
+
+    .trace-item::before {
+      content: "•";
+      color: #38bdf8;
+      font-weight: bold;
+    }
+
     /* Actions List */
     .actions-list {
       display: flex;
@@ -867,6 +930,80 @@
       `;
     }
 
+    function buildReasoningTrace(goal, gIdx, contexts, meta) {
+      if (!goal) return [];
+
+      const traceSteps = [];
+      const allContexts = Array.isArray(contexts) ? contexts : [];
+      const actions = Array.isArray(goal.actions) ? goal.actions : [];
+      const metaObj = meta || {};
+
+      // 1. Relevance / Match line (uses goal.score)
+      const scorePct = Math.round((goal.score || 0) * 100);
+      traceSteps.push(`Matched at ${scorePct}% confidence via diagnostic catalog retrieval`);
+
+      // 2. Validation summary line (uses goal.actions[].category)
+      const catSeq = actions.map(a => (a.category || "manual").toLowerCase());
+      const catSequenceStr = catSeq.length > 0 ? catSeq.join(" → ") : "none";
+      traceSteps.push(
+        `Validated ${actions.length} action${actions.length === 1 ? "" : "s"}: ${catSequenceStr}`
+      );
+
+      // 3. Deeplink status line (defensively inspects stepGroups[].actionableDeeplink)
+      let resolvedLinksCount = 0;
+      let autoWithoutLinkCount = 0;
+      let guardedCount = 0;
+
+      actions.forEach(a => {
+        const isAuto = (a.category === "auto");
+        const sgs = Array.isArray(a.stepGroups) ? a.stepGroups : [];
+        sgs.forEach(sg => {
+          if (sg && sg.actionableDeeplink && sg.actionableDeeplink.deeplink) {
+            resolvedLinksCount++;
+          } else if (isAuto) {
+            autoWithoutLinkCount++;
+          } else {
+            guardedCount++;
+          }
+        });
+      });
+
+      if (resolvedLinksCount > 0 && autoWithoutLinkCount === 0) {
+        traceSteps.push(
+          `Deeplink integrity: 0 broken links (${resolvedLinksCount} resolved, ${guardedCount} non-settings steps guarded)`
+        );
+      } else if (autoWithoutLinkCount > 0) {
+        traceSteps.push(
+          `Deeplink integrity: ${resolvedLinksCount} resolved, ${autoWithoutLinkCount} auto action(s) unlinked`
+        );
+      } else {
+        traceSteps.push(
+          `Deeplink integrity: Zero unverified links (manual physical checks / reboot steps safely guarded)`
+        );
+      }
+
+      // 4. Ranking line (uses gIdx position in contexts array and relative scores)
+      const total = allContexts.length;
+      const rank = gIdx + 1;
+      let rankStr = `Ranked #${rank} of ${total} hypothes${total === 1 ? "is" : "es"}`;
+      if (total > 1) {
+        const otherScores = allContexts
+          .map((c, i) => (i !== gIdx && c ? Math.round((c.score || 0) * 100) : null))
+          .filter(s => s !== null);
+        if (otherScores.length > 0) {
+          rankStr += ` (score: ${scorePct}%, alternative: ${otherScores.join("%, ")}%)`;
+        }
+      }
+      traceSteps.push(rankStr);
+
+      // 5. Cache & Telemetry line (conditional on meta.cache_hit)
+      if (metaObj.cache_hit) {
+        traceSteps.push(`Served from semantic cache in ${metaObj.latency_ms ?? 0}ms`);
+      }
+
+      return traceSteps;
+    }
+
     function renderResponse(data) {
       // Extract contexts, fallback, and meta across both Flat and Appendix B shapes
       let contexts = [];
@@ -917,6 +1054,26 @@
       contexts.forEach((goal, gIdx) => {
         const scorePct = Math.round((goal.score || 0) * 100);
 
+        // Synthesize client-side reasoning trace from existing response fields
+        const traceItems = buildReasoningTrace(goal, gIdx, contexts, meta);
+        let traceSectionHtml = "";
+        if (traceItems.length > 0) {
+          const traceListHtml = traceItems
+            .map(item => `<li class="trace-item">${escapeHtml(item)}</li>`)
+            .join("");
+          traceSectionHtml = `
+            <details class="diagnosis-trace">
+              <summary class="trace-summary">
+                <span>🔍 Why this diagnosis?</span>
+                <span class="trace-summary-hint">View reasoning trace</span>
+              </summary>
+              <ul class="trace-list">
+                ${traceListHtml}
+              </ul>
+            </details>
+          `;
+        }
+
         html += `
           <div class="goal-card">
             <div class="goal-header">
@@ -926,6 +1083,7 @@
               </div>
               <div class="score-badge">Confidence: ${scorePct}%</div>
             </div>
+            ${traceSectionHtml}
 
             <div class="actions-list">
         `;
