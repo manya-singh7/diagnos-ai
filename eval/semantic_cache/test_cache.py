@@ -283,7 +283,7 @@ def test_clarify_skips_cache_lookup(api):
 
     # Guard against this test passing vacuously: without the skip, the clarified
     # query really would be served the pre-clarification answer.
-    _, info = cache_lookup(f"{original}. User clarification: {answer}")
+    _, info = cache_lookup(f"{original}. User clarification: {answer}.")  # main.clarify()'s format
     assert info["decision"] == "hit", info
 
 
@@ -378,6 +378,81 @@ def test_restoring_same_query_refreshes_without_deadlock():
     assert not t.is_alive(), "cache_store deadlocked on the refresh path"
     assert cache_stats()["entries"] == 1
     assert [s["result"] for s in cache.cache_debug()["recent_stores"]] == ["stored (1 vector)", "refreshed"]
+
+
+# ---------------------------------------------------------------------------
+# Self-critique (ENABLE_SELF_CRITIQUE) interaction
+# ---------------------------------------------------------------------------
+
+def _second_goal() -> dict:
+    return {
+        "goal": "Follow these steps to perform this Network Reset Troubleshooting",
+        "title": "Network reset",
+        "score": 0.8,
+        "actions": [
+            {
+                "actionName": "Reset Network Settings",
+                "description": "It will reset all network settings",
+                "category": "critical",
+                "stepGroups": [{"steps": ["Open Settings.", "Tap General management.", "Tap Reset."]}],
+            }
+        ],
+    }
+
+
+@pytest.fixture
+def critique_api(monkeypatch):
+    """Self-critique enabled, with a mock client (no network) so the critique branch can run."""
+    from unittest.mock import MagicMock
+
+    import main
+    from fastapi.testclient import TestClient
+    from schema import Goal
+
+    calls = {"extract": 0, "critique": 0}
+
+    def fake_extract_goals(**kwargs):
+        calls["extract"] += 1
+        return [Goal(**_GOAL), Goal(**_second_goal())], {"prompt_tokens": 0, "candidates_tokens": 0}
+
+    def fake_critique(goals, query, **kwargs):
+        calls["critique"] += 1
+        # Keep the Bluetooth plan at half relevance, reject the network reset.
+        return [(True, 0.5), (False, 0.1)], {"prompt_tokens": 0, "candidates_tokens": 0}
+
+    monkeypatch.setenv("ENABLE_SELF_CRITIQUE", "true")
+    monkeypatch.setattr(main, "gemini_client", MagicMock(name="mock_gemini_client"))
+    monkeypatch.setattr(main, "extract_goals", fake_extract_goals)
+    monkeypatch.setattr(main, "critique_goals_combined", fake_critique)
+    return main, TestClient(main.app), calls
+
+
+def test_cache_hit_returns_before_self_critique(critique_api):
+    main, client, calls = critique_api
+    cache_store("turn bluetooth on", _ok_response(), [])
+
+    body = client.post("/v1/troubleshoot", json={"query": "turn bluetooth on"}).json()
+
+    assert body["meta"]["cache_hit"] is True
+    assert calls == {"extract": 0, "critique": 0}
+
+
+def test_cache_miss_stores_the_post_critique_response(critique_api):
+    main, client, calls = critique_api
+
+    first = client.post("/v1/troubleshoot", json={"query": "turn bluetooth on"}).json()
+
+    assert calls == {"extract": 1, "critique": 1}  # the critique branch really ran
+    assert [g["title"] for g in first["contexts"]] == ["Bluetooth settings"]  # rejected plan dropped
+
+    stored, info = cache_lookup("turn bluetooth on")
+    assert info["decision"] == "hit"
+    assert stored["contexts"] == first["contexts"]  # final response, incl. critique-scaled score
+
+    second = client.post("/v1/troubleshoot", json={"query": "turn bluetooth on"}).json()
+    assert second["meta"]["cache_hit"] is True
+    assert second["contexts"] == first["contexts"]
+    assert calls == {"extract": 1, "critique": 1}  # the hit made no further calls
 
 
 def test_cache_stats_endpoint(api):
