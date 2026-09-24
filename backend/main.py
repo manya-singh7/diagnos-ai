@@ -904,7 +904,11 @@ def _cache_decision_header(info: Dict[str, Any]) -> str:
 
 
 @app.post("/v1/troubleshoot", response_model=Union[ContextDeeplinkResponse, AppendixBResponse])
-def troubleshoot(payload: TroubleshootRequest, http_response: Response = None):  # type: ignore[assignment]  # None for internal calls
+def troubleshoot(
+    payload: TroubleshootRequest,
+    http_response: Response = None,  # type: ignore[assignment]  # None for internal calls
+    skip_cache_lookup: bool = False,
+):
     """
     Takes a customer complaint and optional untrusted SIIS text and returns an actionable plan.
     Returns up to 2 ranked Goals in contexts, ordered by confidence score descending.
@@ -918,7 +922,10 @@ def troubleshoot(payload: TroubleshootRequest, http_response: Response = None): 
 
     query = enrich_query(raw_query)
 
-    cached_response, cache_info = cache_lookup(raw_query)
+    if skip_cache_lookup:
+        cached_response, cache_info = None, {"decision": "skipped"}
+    else:
+        cached_response, cache_info = cache_lookup(raw_query)
     if http_response is not None:
         http_response.headers["X-Cache-Decision"] = _cache_decision_header(cache_info)
     if cached_response is not None:
@@ -1130,7 +1137,8 @@ def clarify(payload: ClarifyRequest):
 
     # Fold clarification answer into query and re-execute pipeline
     combined_query = f"{payload.query}. User clarification: {clean_answer}"
-    result = troubleshoot(TroubleshootRequest(query=combined_query))
+    # A clarified query can look similar to the cached original; always re-run the pipeline.
+    result = troubleshoot(TroubleshootRequest(query=combined_query), skip_cache_lookup=True)
 
     return ClarifyResponse(
         contexts=result.contexts,

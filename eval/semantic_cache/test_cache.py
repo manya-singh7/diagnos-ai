@@ -266,6 +266,27 @@ def test_cache_decision_header_is_exposed_to_browsers(api):
     assert "X-Cache-Decision" in r.headers.get("access-control-expose-headers", "")
 
 
+def test_clarify_skips_cache_lookup(api):
+    main, client, gemini_calls = api
+    original = "screen gestures not responding"
+    answer = "it started after the latest update"
+    cache_store(original, _ok_response(), [])
+
+    body = client.post(
+        "/v1/clarify",
+        json={"query": original, "hypotheses": [], "clarification_answer": answer},
+    ).json()
+
+    assert body["meta"]["cache_hit"] is False
+    assert len(gemini_calls) == 1  # the pipeline re-ran on the clarified query
+    assert cache_stats()["lookups"] == 0
+
+    # Guard against this test passing vacuously: without the skip, the clarified
+    # query really would be served the pre-clarification answer.
+    _, info = cache_lookup(f"{original}. User clarification: {answer}")
+    assert info["decision"] == "hit", info
+
+
 def test_cache_stats_endpoint(api):
     main, client, _ = api
     body = client.get("/v1/cache/stats").json()
