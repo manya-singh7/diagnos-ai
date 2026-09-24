@@ -40,6 +40,22 @@ Evaluated across core device domains parsed from `results.jsonl`.
 | Camera | 1 | 100.0% | 4510 ms | 0.75 (75.0%) |
 | Performance | 1 | 100.0% | 4576 ms | 0.85 (85.0%) |
 
+### 2.2 Confidence Calibration Analysis
+Evaluated across 8 generated troubleshooting goals and 9 actionable steps from `results.jsonl`. Validates whether the blended BM25 + critique confidence score predicts deeplink correctness and retrieval precision.
+
+| Score Bucket | Goals Evaluated | Goal Correctness (%) | Auto Actions | Exact Catalog Match Rate | Dummy Fallback Rate | Primary Hypothesis Ratio |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **0.90 – 1.00** | 3 | 100.0% (3/3) | 4 | **50.0%** (2/4) | 50.0% (2/4) | 100.0% (Rank 1) |
+| **0.70 – 0.89** | 4 | 100.0% (4/4) | 4 | **25.0%** (1/4) | 75.0% (3/4) | 25.0% (Rank 1) / 75.0% (Rank 2) |
+| **0.50 – 0.69** | 1 | 100.0% (1/1) | 1 | **0.0%** (0/1) | 100.0% (1/1) | 0.0% (Rank 1) / 100.0% (Rank 2) |
+| **< 0.50** | 0 | N/A (Filtered) | 0 | N/A | N/A | N/A |
+
+> [!NOTE]
+> **Calibration Insights**:
+> * **Binary Correctness**: Saturated at 100.0% across all buckets due to Variant A's deterministic guardrails (catalog verification + safety veto on critical reboot actions eliminate illegal URIs regardless of model uncertainty).
+> * **Precision Calibration**: Confidence strongly predicts **catalog specificity**: goals scoring ≥ 0.90 achieve a 50.0% exact settings hit rate, dropping monotonically to 25.0% (0.70–0.89) and 0.0% (0.50–0.69), which cleanly route to safe fallback screens without hallucinating.
+> * **Sample Size Limitation**: The small per-bucket sample sizes ($n = 3, 4, 1$) represent a key evaluation constraint — while the monotonic precision gradient is directionally interesting, it is not statistically robust at this scale, mirroring the general sample-data caveat established above.
+
 ---
 
 ## 3. Latency Benchmarks (N >= 30 requests per path)
