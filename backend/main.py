@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Response, UploadFile
+from fastapi import FastAPI, File, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -907,7 +907,7 @@ def _cache_decision_header(info: Dict[str, Any]) -> str:
 def troubleshoot(
     payload: TroubleshootRequest,
     http_response: Response = None,  # type: ignore[assignment]  # None for internal calls
-    skip_cache_lookup: bool = False,
+    skip_cache_lookup: bool = Query(False, include_in_schema=False),
 ):
     """
     Takes a customer complaint and optional untrusted SIIS text and returns an actionable plan.
@@ -922,7 +922,8 @@ def troubleshoot(
 
     query = enrich_query(raw_query)
 
-    if skip_cache_lookup:
+    # "is True": internal calls that omit the flag get the (truthy) Query() default object.
+    if skip_cache_lookup is True:
         cached_response, cache_info = None, {"decision": "skipped"}
     else:
         cached_response, cache_info = cache_lookup(raw_query)

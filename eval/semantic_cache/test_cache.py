@@ -287,6 +287,16 @@ def test_clarify_skips_cache_lookup(api):
     assert info["decision"] == "hit", info
 
 
+def test_internal_call_without_flag_still_uses_cache(api):
+    # /v1/troubleshoot-image calls troubleshoot() directly without skip_cache_lookup,
+    # so it receives the Query() default object, which is truthy.
+    main, _, gemini_calls = api
+    cache_store("turn bluetooth on", _ok_response(), [])
+    result = main.troubleshoot(main.TroubleshootRequest(query="turn bluetooth on"))
+    assert result.meta.cache_hit is True
+    assert gemini_calls == []
+
+
 def test_cache_stats_endpoint(api):
     main, client, _ = api
     body = client.get("/v1/cache/stats").json()
