@@ -1080,8 +1080,26 @@ def clarify(payload: ClarifyRequest):
             question=None,
         )
 
-    # Fold clarification answer into query and re-execute pipeline
-    combined_query = f"{payload.query}. User clarification: {clean_answer}"
+    # Fold clarification answer and previous candidate hypotheses into query to guide re-ranking
+    combined_query = f"{payload.query}. User clarification: {clean_answer}."
+    if payload.hypotheses:
+        candidate_titles = [
+            h.title.strip()
+            for h in payload.hypotheses
+            if getattr(h, "title", None) and h.title.strip()
+        ]
+        if len(candidate_titles) >= 2:
+            combined_query += (
+                f" The system previously considered these possibilities: "
+                f"{candidate_titles[0]}, {candidate_titles[1]}. "
+                f"The user's clarification should help distinguish between them."
+            )
+        elif len(candidate_titles) == 1:
+            combined_query += (
+                f" The system previously considered this possibility: {candidate_titles[0]}. "
+                f"The user's clarification should help confirm or refine it."
+            )
+
     result = troubleshoot(TroubleshootRequest(query=combined_query))
 
     return ClarifyResponse(
