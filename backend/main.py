@@ -83,6 +83,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 RESPONSE_SHAPE: str = os.getenv("RESPONSE_SHAPE", "flat")
+ENABLE_QUERY_VARIATIONS: bool = os.getenv("ENABLE_QUERY_VARIATIONS", "false").strip().lower() in ("true", "1", "yes")
 
 try:
     from cache import cache_store, is_cache_ready
@@ -865,42 +866,59 @@ def troubleshoot(payload: TroubleshootRequest):
     active_client = gemini_client
     token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
 
-    # Parallel execution of extraction and query variations on cache miss
-    if active_client is not None:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            extract_future = executor.submit(
-                extract_goals,
+    should_generate_variations = os.getenv(
+        "ENABLE_QUERY_VARIATIONS", "true" if ENABLE_QUERY_VARIATIONS else "false"
+    ).strip().lower() in ("true", "1", "yes")
+
+    if should_generate_variations:
+        # Parallel execution of extraction and query variations on cache miss
+        if active_client is not None:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                extract_future = executor.submit(
+                    extract_goals,
+                    query=query,
+                    siis_response=raw_siis,
+                    client=active_client,
+                    model_name=MODEL_NAME,
+                    max_goals=2,
+                )
+                variations_future = executor.submit(
+                    generate_query_variations,
+                    query=raw_query,
+                    client=active_client,
+                    model_name=MODEL_NAME,
+                )
+                goals, ext_tokens = extract_future.result()
+                variations, var_tokens = variations_future.result()
+                token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0) + var_tokens.get("prompt_tokens", 0)
+                token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0) + var_tokens.get("candidates_tokens", 0)
+        else:
+            goals, ext_tokens = extract_goals(
                 query=query,
                 siis_response=raw_siis,
-                client=active_client,
+                client=None,
                 model_name=MODEL_NAME,
                 max_goals=2,
             )
-            variations_future = executor.submit(
-                generate_query_variations,
+            variations, var_tokens = generate_query_variations(
                 query=raw_query,
-                client=active_client,
+                client=None,
                 model_name=MODEL_NAME,
             )
-            goals, ext_tokens = extract_future.result()
-            variations, var_tokens = variations_future.result()
             token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0) + var_tokens.get("prompt_tokens", 0)
             token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0) + var_tokens.get("candidates_tokens", 0)
     else:
+        # Fast path: Skip query variations while cache module is not built
         goals, ext_tokens = extract_goals(
             query=query,
             siis_response=raw_siis,
-            client=None,
+            client=active_client,
             model_name=MODEL_NAME,
             max_goals=2,
         )
-        variations, var_tokens = generate_query_variations(
-            query=raw_query,
-            client=None,
-            model_name=MODEL_NAME,
-        )
-        token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0) + var_tokens.get("prompt_tokens", 0)
-        token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0) + var_tokens.get("candidates_tokens", 0)
+        variations = []
+        token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0)
+        token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0)
 
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
