@@ -84,6 +84,7 @@ except Exception:
 
 RESPONSE_SHAPE: str = os.getenv("RESPONSE_SHAPE", "flat")
 ENABLE_QUERY_VARIATIONS: bool = os.getenv("ENABLE_QUERY_VARIATIONS", "false").strip().lower() in ("true", "1", "yes")
+ENABLE_SELF_CRITIQUE: bool = os.getenv("ENABLE_SELF_CRITIQUE", "false").strip().lower() in ("true", "1", "yes")
 
 try:
     from cache import cache_store, is_cache_ready
@@ -313,6 +314,76 @@ def _normalize_and_validate_goal(data: Dict[str, Any]) -> Goal:
         )
 
     return Goal(**data)
+
+
+CRITIQUE_PROMPT = """You are a rigorous QA critic for Samsung Galaxy device troubleshooting.
+Evaluate whether the following troubleshooting plan is genuinely relevant, realistic, and safe for the customer's specific complaint.
+
+Customer Complaint: "{query}"
+
+Proposed Troubleshooting Plan:
+- Title: {title}
+- Goal: {goal}
+- Actions: {actions_summary}
+
+CRITIQUE CONSTRAINTS:
+1. Return JSON shape: {{"is_relevant": true, "relevance_score": 0.95, "critique": "Plan directly addresses ..."}}
+2. is_relevant: boolean. Set to false if the plan is off-topic, hallucinates unrelated hardware, or fails to address the complaint.
+3. relevance_score: float between 0.0 and 1.0 indicating how directly the plan targets the root cause.
+4. critique: exactly one concise sentence (no URLs, markdown fences, or preamble)."""
+
+
+def critique_goal_relevance(
+    goal: Goal,
+    query: str,
+    client: Optional[Any] = None,
+    model_name: str = MODEL_NAME,
+) -> Tuple[bool, float, Dict[str, Any]]:
+    """
+    Evaluates whether an extracted goal is genuinely relevant and realistic for the query.
+    Returns (is_relevant, relevance_score, token_usage).
+    Fails safely by accepting the goal if the critique call encounters any error.
+    """
+    token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
+    active_client = client if client is not None else gemini_client
+    if active_client is None:
+        return True, 1.0, token_usage
+
+    actions_summary = "; ".join(f"{a.actionName} ({a.category.value})" for a in goal.actions)
+    prompt = CRITIQUE_PROMPT.format(
+        query=query,
+        title=goal.title,
+        goal=goal.goal,
+        actions_summary=actions_summary,
+    )
+    try:
+        response = active_client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.0,
+                seed=42,
+                max_output_tokens=150,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            token_usage["prompt_tokens"] = response.usage_metadata.prompt_token_count or 0
+            token_usage["candidates_tokens"] = response.usage_metadata.candidates_token_count or 0
+
+        raw_text = (response.text or "{}").strip()
+        raw_text = re.sub(r"^```json\s*", "", raw_text)
+        raw_text = re.sub(r"\s*```$", "", raw_text)
+        data = json.loads(raw_text)
+
+        is_relevant = bool(data.get("is_relevant", True))
+        score = float(data.get("relevance_score", 1.0 if is_relevant else 0.0))
+        score = max(0.0, min(1.0, score))
+        return is_relevant, score, token_usage
+    except Exception as e:
+        logger.warning("Self-critique pass failed (%s), defaulting to accepting goal.", e)
+        return True, 1.0, token_usage
 
 
 def extract_goals(
@@ -948,6 +1019,35 @@ def troubleshoot(payload: TroubleshootRequest):
         variations = []
         token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0)
         token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0)
+
+    # Optional Self-Critique Pass: Gated by ENABLE_SELF_CRITIQUE (default false)
+    should_self_critique = os.getenv(
+        "ENABLE_SELF_CRITIQUE", "true" if ENABLE_SELF_CRITIQUE else "false"
+    ).strip().lower() in ("true", "1", "yes")
+
+    if should_self_critique and active_client is not None and goals:
+        critiqued_goals: List[Goal] = []
+        for g in goals:
+            is_rel, rel_score, critique_tokens = critique_goal_relevance(
+                goal=g,
+                query=raw_query,
+                client=active_client,
+                model_name=MODEL_NAME,
+            )
+            token_usage["prompt_tokens"] += critique_tokens.get("prompt_tokens", 0)
+            token_usage["candidates_tokens"] += critique_tokens.get("candidates_tokens", 0)
+
+            if is_rel and rel_score >= 0.5:
+                g.score = round(g.score * rel_score, 4)
+                critiqued_goals.append(g)
+            else:
+                logger.warning(
+                    "Self-critique rejected goal '%s' for query '%s' (relevance=%.2f)",
+                    g.title,
+                    raw_query,
+                    rel_score,
+                )
+        goals = critiqued_goals
 
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
