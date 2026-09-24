@@ -316,46 +316,48 @@ def _normalize_and_validate_goal(data: Dict[str, Any]) -> Goal:
     return Goal(**data)
 
 
-CRITIQUE_PROMPT = """You are a rigorous QA critic for Samsung Galaxy device troubleshooting.
-Evaluate whether the following troubleshooting plan is genuinely relevant, realistic, and safe for the customer's specific complaint.
+COMBINED_CRITIQUE_PROMPT = """You are a rigorous QA critic for Samsung Galaxy device troubleshooting.
+Evaluate whether the following candidate troubleshooting plan(s) are genuinely relevant, realistic, and safe for the customer's specific complaint.
 
 Customer Complaint: "{query}"
 
-Proposed Troubleshooting Plan:
-- Title: {title}
-- Goal: {goal}
-- Actions: {actions_summary}
+Proposed Candidate Plans:
+{candidates_text}
 
 CRITIQUE CONSTRAINTS:
-1. Return JSON shape: {{"is_relevant": true, "relevance_score": 0.95, "critique": "Plan directly addresses ..."}}
-2. is_relevant: boolean. Set to false if the plan is off-topic, hallucinates unrelated hardware, or fails to address the complaint.
-3. relevance_score: float between 0.0 and 1.0 indicating how directly the plan targets the root cause.
-4. critique: exactly one concise sentence (no URLs, markdown fences, or preamble)."""
+1. Return JSON shape: {{"evaluations": [{{"index": 0, "is_relevant": true, "relevance_score": 0.95, "critique": "Plan directly addresses..."}}]}}
+2. Return exactly one evaluation item per proposed candidate plan matching its "index".
+3. is_relevant: boolean. Set to false if the plan is off-topic, hallucinates unrelated hardware, or fails to address the complaint.
+4. relevance_score: float between 0.0 and 1.0 indicating how directly the plan targets the root cause.
+5. critique: exactly one concise sentence per plan (no URLs, markdown fences, or preamble)."""
 
 
-def critique_goal_relevance(
-    goal: Goal,
+def critique_goals_combined(
+    goals: List[Goal],
     query: str,
     client: Optional[Any] = None,
     model_name: str = MODEL_NAME,
-) -> Tuple[bool, float, Dict[str, Any]]:
+) -> Tuple[List[Tuple[bool, float]], Dict[str, Any]]:
     """
-    Evaluates whether an extracted goal is genuinely relevant and realistic for the query.
-    Returns (is_relevant, relevance_score, token_usage).
-    Fails safely by accepting the goal if the critique call encounters any error.
+    Evaluates candidate goals in a single batched Gemini API call for relevance.
+    Returns ([(is_relevant, relevance_score), ...], token_usage).
+    Fails safely by accepting all goals if the call fails or JSON is malformed.
     """
+    default_results = [(True, 1.0) for _ in goals]
     token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
     active_client = client if client is not None else gemini_client
-    if active_client is None:
-        return True, 1.0, token_usage
+    if active_client is None or not goals:
+        return default_results, token_usage
 
-    actions_summary = "; ".join(f"{a.actionName} ({a.category.value})" for a in goal.actions)
-    prompt = CRITIQUE_PROMPT.format(
-        query=query,
-        title=goal.title,
-        goal=goal.goal,
-        actions_summary=actions_summary,
-    )
+    candidate_blocks = []
+    for idx, g in enumerate(goals):
+        actions_summary = "; ".join(f"{a.actionName} ({a.category.value})" for a in g.actions)
+        candidate_blocks.append(
+            f"Plan #{idx}:\n- Title: {g.title}\n- Goal: {g.goal}\n- Actions: {actions_summary}"
+        )
+    candidates_text = "\n\n".join(candidate_blocks)
+    prompt = COMBINED_CRITIQUE_PROMPT.format(query=query, candidates_text=candidates_text)
+
     try:
         response = active_client.models.generate_content(
             model=model_name,
@@ -364,7 +366,7 @@ def critique_goal_relevance(
                 response_mime_type="application/json",
                 temperature=0.0,
                 seed=42,
-                max_output_tokens=150,
+                max_output_tokens=300,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
@@ -377,13 +379,39 @@ def critique_goal_relevance(
         raw_text = re.sub(r"\s*```$", "", raw_text)
         data = json.loads(raw_text)
 
-        is_relevant = bool(data.get("is_relevant", True))
-        score = float(data.get("relevance_score", 1.0 if is_relevant else 0.0))
-        score = max(0.0, min(1.0, score))
-        return is_relevant, score, token_usage
+        evals = (
+            data.get("evaluations", [])
+            if isinstance(data, dict)
+            else (data if isinstance(data, list) else [])
+        )
+        results_by_index: Dict[int, Tuple[bool, float]] = {}
+        for item in evals:
+            if isinstance(item, dict):
+                idx = item.get("index")
+                if isinstance(idx, int) and 0 <= idx < len(goals):
+                    is_rel = bool(item.get("is_relevant", True))
+                    score = float(item.get("relevance_score", 1.0 if is_rel else 0.0))
+                    score = max(0.0, min(1.0, score))
+                    results_by_index[idx] = (is_rel, score)
+
+        final_results = [results_by_index.get(i, (True, 1.0)) for i in range(len(goals))]
+        return final_results, token_usage
     except Exception as e:
-        logger.warning("Self-critique pass failed (%s), defaulting to accepting goal.", e)
-        return True, 1.0, token_usage
+        logger.warning("Combined self-critique pass failed (%s), defaulting to accepting goals.", e)
+        return default_results, token_usage
+
+
+def critique_goal_relevance(
+    goal: Goal,
+    query: str,
+    client: Optional[Any] = None,
+    model_name: str = MODEL_NAME,
+) -> Tuple[bool, float, Dict[str, Any]]:
+    """Single-goal critique helper (delegates to critique_goals_combined)."""
+    results, tokens = critique_goals_combined([goal], query, client=client, model_name=model_name)
+    is_rel, score = results[0] if results else (True, 1.0)
+    return is_rel, score, tokens
+
 
 
 def extract_goals(
@@ -1021,33 +1049,53 @@ def troubleshoot(payload: TroubleshootRequest):
         token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0)
 
     # Optional Self-Critique Pass: Gated by ENABLE_SELF_CRITIQUE (default false)
+    # Protected by strict SLA controls: 4000ms threshold guard and 2000ms hard timeout via concurrent.futures
     should_self_critique = os.getenv(
         "ENABLE_SELF_CRITIQUE", "true" if ENABLE_SELF_CRITIQUE else "false"
     ).strip().lower() in ("true", "1", "yes")
 
     if should_self_critique and active_client is not None and goals:
-        critiqued_goals: List[Goal] = []
-        for g in goals:
-            is_rel, rel_score, critique_tokens = critique_goal_relevance(
-                goal=g,
-                query=raw_query,
-                client=active_client,
-                model_name=MODEL_NAME,
-            )
-            token_usage["prompt_tokens"] += critique_tokens.get("prompt_tokens", 0)
-            token_usage["candidates_tokens"] += critique_tokens.get("candidates_tokens", 0)
-
-            if is_rel and rel_score >= 0.5:
-                g.score = round(g.score * rel_score, 4)
-                critiqued_goals.append(g)
-            else:
-                logger.warning(
-                    "Self-critique rejected goal '%s' for query '%s' (relevance=%.2f)",
-                    g.title,
-                    raw_query,
-                    rel_score,
+        elapsed_so_far_ms = int((time.perf_counter() - start_time) * 1000)
+        if elapsed_so_far_ms <= 4000:
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                future = executor.submit(
+                    critique_goals_combined,
+                    goals=goals,
+                    query=raw_query,
+                    client=active_client,
+                    model_name=MODEL_NAME,
                 )
-        goals = critiqued_goals
+                eval_results, critique_tokens = future.result(timeout=2.0)
+                token_usage["prompt_tokens"] += critique_tokens.get("prompt_tokens", 0)
+                token_usage["candidates_tokens"] += critique_tokens.get("candidates_tokens", 0)
+
+                critiqued_goals: List[Goal] = []
+                for g, (is_rel, rel_score) in zip(goals, eval_results):
+                    if is_rel and rel_score >= 0.5:
+                        g.score = round(g.score * rel_score, 4)
+                        critiqued_goals.append(g)
+                    else:
+                        logger.warning(
+                            "Self-critique rejected goal '%s' for query '%s' (relevance=%.2f)",
+                            g.title,
+                            raw_query,
+                            rel_score,
+                        )
+                goals = critiqued_goals
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "Self-critique call exceeded 2000ms hard SLA timeout; safely bypassing critique."
+                )
+            except Exception as e:
+                logger.warning("Self-critique execution failed (%s), defaulting to accepting goals.", e)
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+        else:
+            logger.warning(
+                "Self-critique bypassed to preserve SLA: elapsed time (%d ms) exceeded 4000ms threshold.",
+                elapsed_so_far_ms,
+            )
 
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 

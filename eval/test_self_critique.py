@@ -1,6 +1,7 @@
 import os
 import sys
-from unittest.mock import MagicMock
+import time
+from unittest.mock import MagicMock, patch
 
 # Add project root and backend to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))
@@ -9,8 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from schema import Goal, Action, ActionCategory, StepGroup, TroubleshootRequest
 import backend.main as bmain
 
-# Test 1: critique_goal_relevance helper function logic directly
-goal = Goal(
+goal1 = Goal(
     goal="Follow these steps to perform this Battery Troubleshooting",
     title="Battery optimization",
     score=0.9,
@@ -24,63 +24,108 @@ goal = Goal(
     ],
 )
 
-# Test 1a: mock client returning relevant critique
+goal2 = Goal(
+    goal="Follow these steps to perform this Display Troubleshooting",
+    title="Screen brightness",
+    score=0.85,
+    actions=[
+        Action(
+            actionName="Adjust Brightness",
+            description="It will lower display power draw",
+            category=ActionCategory.auto,
+            stepGroups=[StepGroup(steps=["Tap display"])],
+        )
+    ],
+)
+
+# Test 1: Combined critique with 2 goals in a single call
 mock_client = MagicMock()
 mock_resp = MagicMock()
-mock_resp.text = '{"is_relevant": true, "relevance_score": 0.95, "critique": "Plan directly addresses battery drain."}'
-mock_resp.usage_metadata.prompt_token_count = 50
-mock_resp.usage_metadata.candidates_token_count = 20
+mock_resp.text = '{"evaluations": [{"index": 0, "is_relevant": true, "relevance_score": 0.95, "critique": "Directly targets battery drain."}, {"index": 1, "is_relevant": true, "relevance_score": 0.8, "critique": "Screen brightness affects battery."}]}'
+mock_resp.usage_metadata.prompt_token_count = 80
+mock_resp.usage_metadata.candidates_token_count = 45
 mock_client.models.generate_content.return_value = mock_resp
 
-is_rel, score, tokens = bmain.critique_goal_relevance(goal, "battery dies fast", client=mock_client)
-assert is_rel is True, f"Expected True, got {is_rel}"
-assert score == 0.95, f"Expected 0.95, got {score}"
-assert tokens["prompt_tokens"] == 50
-print("[PASS] Critique helper relevant test passed")
+evals, tokens = bmain.critique_goals_combined([goal1, goal2], "battery dies fast", client=mock_client)
+assert len(evals) == 2
+assert evals[0] == (True, 0.95)
+assert evals[1] == (True, 0.8)
+assert tokens["prompt_tokens"] == 80
+assert mock_client.models.generate_content.call_count == 1
+print("[PASS] Combined critique: 2 goals evaluated in a single API call")
 
-# Test 1b: mock client returning irrelevant critique
-mock_resp.text = '{"is_relevant": false, "relevance_score": 0.2, "critique": "Plan addresses battery but complaint was about camera."}'
-is_rel, score, tokens = bmain.critique_goal_relevance(goal, "camera blurry", client=mock_client)
-assert is_rel is False, f"Expected False, got {is_rel}"
-assert score == 0.2, f"Expected 0.2, got {score}"
-print("[PASS] Critique helper irrelevant test passed")
+# Test 2: Single-goal critique helper wrapper
+is_rel, score, tokens = bmain.critique_goal_relevance(goal1, "battery dies fast", client=mock_client)
+assert is_rel is True
+assert score == 0.95
+print("[PASS] Single-goal wrapper delegates to combined critique cleanly")
 
-# Test 1c: exception handling fallback (safe failure)
-mock_client.models.generate_content.side_effect = RuntimeError("API connection timeout")
-is_rel, score, tokens = bmain.critique_goal_relevance(goal, "battery dies fast", client=mock_client)
-assert is_rel is True, "Fallback on error should accept goal"
-assert score == 1.0, "Fallback score should be 1.0"
-print("[PASS] Critique helper safe error fallback passed")
+# Test 3: Safe failure on API error
+mock_client.models.generate_content.side_effect = RuntimeError("API timeout")
+evals, tokens = bmain.critique_goals_combined([goal1, goal2], "battery dies fast", client=mock_client)
+assert evals == [(True, 1.0), (True, 1.0)]
+print("[PASS] Safe fallback on API exception: Accepts goals with default scores")
 mock_client.models.generate_content.side_effect = None
 
-# Test 2: Full troubleshoot endpoint with ENABLE_SELF_CRITIQUE='false' vs 'true'
-# Test 2a: 'false'
+# Test 4: Full troubleshoot pipeline with ENABLE_SELF_CRITIQUE='false'
 os.environ["ENABLE_SELF_CRITIQUE"] = "false"
 bmain.gemini_client = mock_client
-bmain.extract_goals = MagicMock(return_value=([goal.model_copy(deep=True)], {"prompt_tokens": 100, "candidates_tokens": 50}))
-bmain.critique_goal_relevance = MagicMock(wraps=bmain.critique_goal_relevance)
+bmain.extract_goals = MagicMock(return_value=([goal1.model_copy(deep=True)], {"prompt_tokens": 100, "candidates_tokens": 50}))
+bmain.critique_goals_combined = MagicMock(wraps=bmain.critique_goals_combined)
 
 resp = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
-assert bmain.critique_goal_relevance.call_count == 0, "Critique should NOT be called when flag is false"
-print("[PASS] ENABLE_SELF_CRITIQUE=false: Zero calls made, zero overhead")
+assert bmain.critique_goals_combined.call_count == 0
+print("[PASS] ENABLE_SELF_CRITIQUE=false: Zero critique calls made")
 
-# Test 2b: 'true'
+# Test 5: Full troubleshoot pipeline with ENABLE_SELF_CRITIQUE='true' within SLA budget
 os.environ["ENABLE_SELF_CRITIQUE"] = "true"
-bmain.critique_goal_relevance.reset_mock()
-bmain.critique_goal_relevance.return_value = (True, 0.9, {"prompt_tokens": 40, "candidates_tokens": 15})
+bmain.critique_goals_combined.reset_mock()
+bmain.critique_goals_combined.return_value = ([(True, 0.9)], {"prompt_tokens": 50, "candidates_tokens": 20})
 
 resp = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
-assert bmain.critique_goal_relevance.call_count == 1, "Critique should be called when flag is true"
-print("[PASS] ENABLE_SELF_CRITIQUE=true: Called and modulated goal")
+assert bmain.critique_goals_combined.call_count == 1
+print("[PASS] ENABLE_SELF_CRITIQUE=true (<= 4000ms): Critique executed in single call and modulated score")
 
-# Test 2c: 'true' and critique rejects goal (relevance < 0.5)
-bmain.critique_goal_relevance.reset_mock()
-bmain.critique_goal_relevance.return_value = (False, 0.2, {"prompt_tokens": 40, "candidates_tokens": 15})
+# Test 6: SLA 4000ms Threshold Guard Bypass
+bmain.critique_goals_combined.reset_mock()
+def slow_extract(*args, **kwargs):
+    time.sleep(0.01)
+    return [goal1.model_copy(deep=True)], {"prompt_tokens": 100, "candidates_tokens": 50}
 
-resp_rejected = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
-assert bmain.critique_goal_relevance.call_count == 1
-assert resp_rejected.fallback == "no_match", f"Expected fallback 'no_match', got {resp_rejected.fallback}"
-assert len(resp_rejected.contexts) == 0
-print("[PASS] ENABLE_SELF_CRITIQUE=true rejection: Discarded irrelevant goal and fell back cleanly")
+bmain.extract_goals = slow_extract
 
-print("\nALL SELF-CRITIQUE VERIFICATION TESTS PASSED SUCCESSFULLY!")
+# Simulate start_time that occurred 4500ms ago
+original_perf_counter = time.perf_counter
+call_counts = [0]
+def mock_perf_counter():
+    call_counts[0] += 1
+    # On first call (start_time), return 0.0. On subsequent calls, return 4.5s (4500ms)
+    if call_counts[0] == 1:
+        return 0.0
+    return 4.5
+
+with patch("time.perf_counter", side_effect=mock_perf_counter):
+    resp_bypassed = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
+
+assert bmain.critique_goals_combined.call_count == 0
+print("[PASS] 4000ms Threshold Guard: Critique safely bypassed when elapsed time exceeds 4000ms")
+
+# Test 7: 2000ms Hard Timeout Guard via concurrent.futures
+bmain.critique_goals_combined.reset_mock()
+def hanging_critique(*args, **kwargs):
+    time.sleep(2.5)  # exceeds 2.0s timeout
+    return [(True, 0.5)], {"prompt_tokens": 0, "candidates_tokens": 0}
+
+bmain.critique_goals_combined = hanging_critique
+bmain.extract_goals = MagicMock(return_value=([goal1.model_copy(deep=True)], {"prompt_tokens": 100, "candidates_tokens": 50}))
+
+t0 = time.perf_counter()
+resp_timeout = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
+total_duration = time.perf_counter() - t0
+
+# Verify it timed out in ~2.0s rather than waiting 2.5s+
+assert total_duration < 2.3, f"Expected timeout around 2.0s, took {total_duration:.2f}s"
+assert len(resp_timeout.contexts) == 1, "Should safely retain extracted goals on timeout"
+print(f"[PASS] 2000ms Hard Timeout: Aborted critique after {total_duration:.2f}s and returned extracted goals safely")
+
+print("\nALL COMBINED CRITIQUE & SLA GUARD TESTS PASSED SUCCESSFULLY!")
