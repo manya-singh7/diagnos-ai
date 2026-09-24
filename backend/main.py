@@ -372,13 +372,13 @@ def critique_goals_combined(
     query: str,
     client: Optional[Any] = None,
     model_name: str = MODEL_NAME,
-) -> Tuple[List[Tuple[bool, float]], Dict[str, Any]]:
+) -> Tuple[List[Tuple[bool, float, Optional[str]]], Dict[str, Any]]:
     """
     Evaluates candidate goals in a single batched Gemini API call for relevance.
-    Returns ([(is_relevant, relevance_score), ...], token_usage).
+    Returns ([(is_relevant, relevance_score, critique_text), ...], token_usage).
     Fails safely by accepting all goals if the call fails or JSON is malformed.
     """
-    default_results = [(True, 1.0) for _ in goals]
+    default_results = [(True, 1.0, None) for _ in goals]
     token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
     active_client = client if client is not None else gemini_client
     if active_client is None or not goals:
@@ -419,7 +419,7 @@ def critique_goals_combined(
             if isinstance(data, dict)
             else (data if isinstance(data, list) else [])
         )
-        results_by_index: Dict[int, Tuple[bool, float]] = {}
+        results_by_index: Dict[int, Tuple[bool, float, Optional[str]]] = {}
         for item in evals:
             if isinstance(item, dict):
                 idx = item.get("index")
@@ -427,9 +427,11 @@ def critique_goals_combined(
                     is_rel = bool(item.get("is_relevant", True))
                     score = float(item.get("relevance_score", 1.0 if is_rel else 0.0))
                     score = max(0.0, min(1.0, score))
-                    results_by_index[idx] = (is_rel, score)
+                    raw_critique = str(item.get("critique", "")).strip()
+                    critique_text = scrub_urls(raw_critique) or None
+                    results_by_index[idx] = (is_rel, score, critique_text)
 
-        final_results = [results_by_index.get(i, (True, 1.0)) for i in range(len(goals))]
+        final_results = [results_by_index.get(i, (True, 1.0, None)) for i in range(len(goals))]
         return final_results, token_usage
     except Exception as e:
         logger.warning("Combined self-critique pass failed (%s), defaulting to accepting goals.", e)
@@ -441,11 +443,12 @@ def critique_goal_relevance(
     query: str,
     client: Optional[Any] = None,
     model_name: str = MODEL_NAME,
-) -> Tuple[bool, float, Dict[str, Any]]:
+) -> Tuple[bool, float, Optional[str], Dict[str, Any]]:
     """Single-goal critique helper (delegates to critique_goals_combined)."""
     results, tokens = critique_goals_combined([goal], query, client=client, model_name=model_name)
-    is_rel, score = results[0] if results else (True, 1.0)
-    return is_rel, score, tokens
+    is_rel, score, critique_text = results[0] if results else (True, 1.0, None)
+    return is_rel, score, critique_text, tokens
+
 
 
 
@@ -1151,9 +1154,10 @@ def troubleshoot(
                 token_usage["candidates_tokens"] += critique_tokens.get("candidates_tokens", 0)
 
                 critiqued_goals: List[Goal] = []
-                for g, (is_rel, rel_score) in zip(goals, eval_results):
+                for g, (is_rel, rel_score, critique_text) in zip(goals, eval_results):
                     if is_rel and rel_score >= 0.5:
                         g.score = round(g.score * rel_score, 4)
+                        g.self_critique = critique_text
                         critiqued_goals.append(g)
                     else:
                         logger.warning(

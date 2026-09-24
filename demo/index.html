@@ -981,6 +981,11 @@
       const scorePct = Math.round((goal.score || 0) * 100);
       traceSteps.push(`Matched at ${scorePct}% confidence via diagnostic catalog retrieval`);
 
+      // Agentic self-critique explanation if surfaced by model
+      if (goal.self_critique) {
+        traceSteps.push(`Agentic critique: ${goal.self_critique}`);
+      }
+
       // 2. Validation summary line (uses goal.actions[].category)
       const catSeq = actions.map(a => (a.category || "manual").toLowerCase());
       const catSequenceStr = catSeq.length > 0 ? catSeq.join(" → ") : "none";
