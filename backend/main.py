@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
+from urllib.parse import quote
 
 # Ensure backend directory is in sys.path so schema, retrieval, and cache resolve
 # regardless of whether the app is started from the repo root or inside backend/
@@ -15,7 +16,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -67,6 +68,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Cache-Decision"],
 )
 
 # ---------------------------------------------------------------------------
@@ -94,10 +96,10 @@ ENABLE_QUERY_VARIATIONS: bool = os.getenv("ENABLE_QUERY_VARIATIONS", "false").st
 ENABLE_SELF_CRITIQUE: bool = os.getenv("ENABLE_SELF_CRITIQUE", "false").strip().lower() in ("true", "1", "yes")
 
 try:
-    from cache import cache_store, is_cache_ready
+    from cache import cache_debug, cache_lookup, cache_stats, cache_store, is_cache_ready
 except ImportError:
     try:
-        from backend.cache import cache_store, is_cache_ready
+        from backend.cache import cache_debug, cache_lookup, cache_stats, cache_store, is_cache_ready
     except ImportError:
         def cache_store(query: str, response: Any, variations: List[str]) -> None:
             """Pass-through stub for Person C cache store integration."""
@@ -105,6 +107,15 @@ except ImportError:
 
         def is_cache_ready() -> bool:
             return True
+
+        def cache_lookup(query: str) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+            return None, {"decision": "disabled"}
+
+        def cache_stats() -> Dict[str, Any]:
+            return {"enabled": False}
+
+        def cache_debug() -> Dict[str, Any]:
+            return {"enabled": False}
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +190,23 @@ def health_details():
             "catalog_ready": index_ready,
         },
     )
+
+
+@app.get("/v1/cache/stats")
+def get_cache_stats():
+    """Semantic cache counters: hits, misses, each veto type, hit_rate, avg_lookup_ms, entries."""
+    return cache_stats()
+
+
+@app.get("/v1/cache/entries", include_in_schema=False)
+def get_cache_entries():
+    """
+    Debug only: stored queries plus recent lookups/stores. Exposes users' queries,
+    so it is 404 unless CACHE_DEBUG=true.
+    """
+    if os.getenv("CACHE_DEBUG", "false").strip().lower() not in ("true", "1", "yes"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return cache_debug()
 
 
 
@@ -986,8 +1014,27 @@ def generate_query_variations(
 # Step 4: REST Endpoints
 # ---------------------------------------------------------------------------
 
+# Printable ASCII except '%' passes through as-is; anything else is percent-encoded
+# so a non-latin-1 query can't break the header (the demo page decodes it).
+_HEADER_SAFE_CHARS = "".join(chr(c) for c in range(32, 127) if chr(c) != "%")
+
+
+def _cache_decision_header(info: Dict[str, Any]) -> str:
+    """e.g. "hit; sim=0.93; matched=wifi won't connect" or "miss_low_sim; sim=0.41"."""
+    parts = [str(info.get("decision", "unknown"))]
+    if isinstance(info.get("similarity"), (int, float)):
+        parts.append(f"sim={info['similarity']:.2f}")
+    if info.get("matched_query") and (parts[0] == "hit" or parts[0].startswith("veto_")):
+        parts.append("matched=" + quote(str(info["matched_query"])[:200], safe=_HEADER_SAFE_CHARS))
+    return "; ".join(parts)
+
+
 @app.post("/v1/troubleshoot", response_model=Union[ContextDeeplinkResponse, AppendixBResponse])
-def troubleshoot(payload: TroubleshootRequest):
+def troubleshoot(
+    payload: TroubleshootRequest,
+    http_response: Response = None,  # type: ignore[assignment]  # None for internal calls
+    skip_cache_lookup: bool = Query(False, include_in_schema=False),
+):
     """
     Takes a customer complaint and optional untrusted SIIS text and returns an actionable plan.
     Returns up to 2 ranked Goals in contexts, ordered by confidence score descending.
@@ -1000,6 +1047,32 @@ def troubleshoot(payload: TroubleshootRequest):
     raw_siis = payload.siis_response
 
     query = enrich_query(raw_query)
+
+    # "is True": internal calls that omit the flag get the (truthy) Query() default object.
+    if skip_cache_lookup is True:
+        cached_response, cache_info = None, {"decision": "skipped"}
+    else:
+        cached_response, cache_info = cache_lookup(raw_query)
+    if http_response is not None:
+        http_response.headers["X-Cache-Decision"] = _cache_decision_header(cache_info)
+    if cached_response is not None:
+        try:
+            cached_inner = cached_response.get("response") or cached_response
+            cached_goals = [Goal(**g) for g in cached_inner.get("contexts", [])]
+            return serialize_response(
+                contexts=cached_goals,
+                fallback=cached_inner.get("fallback"),
+                meta=ResponseMeta(
+                    latency_ms=int((time.perf_counter() - start_time) * 1000),
+                    cache_hit=True,
+                    model=MODEL_NAME,
+                    cost_usd=0.0,
+                ),
+                query=raw_query,
+                query_variations=cached_response.get("query_variations") or cache_info.get("variations", []),
+            )
+        except Exception as e:
+            logger.warning("Cached response could not be rebuilt, falling through to Gemini: %s", e)
 
     active_client = gemini_client
     token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}
@@ -1259,7 +1332,8 @@ def clarify(payload: ClarifyRequest):
                 f"The user's clarification should help confirm or refine it."
             )
 
-    result = troubleshoot(TroubleshootRequest(query=combined_query))
+    # A clarified query can look similar to the cached original; always re-run the pipeline.
+    result = troubleshoot(TroubleshootRequest(query=combined_query), skip_cache_lookup=True)
 
     return ClarifyResponse(
         contexts=result.contexts,
