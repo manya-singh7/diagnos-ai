@@ -1034,6 +1034,20 @@
       }
       telemetryBar.style.display = "flex";
 
+      // Case: Vision analysis unavailable
+      if (fallback === "vision_unavailable") {
+        resultsContainer.innerHTML = `
+          <div class="card no-match-box">
+            <div class="no-match-icon">📷</div>
+            <div class="no-match-title">Image Analysis Unavailable</div>
+            <div class="no-match-desc">
+              ${escapeHtml(data.message || "We couldn't analyze this image right now. Please describe the issue in text instead.")}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
       // Case: No match / fallback
       if (fallback === "no_match" || fallback === "no_siis_context" || contexts.length === 0) {
         resultsContainer.innerHTML = `

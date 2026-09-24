@@ -1097,6 +1097,8 @@ async def troubleshoot_image(file: UploadFile = File(...)):
     using exactly 1 vision-capable Gemini API call, and feeds that description into the
     core /v1/troubleshoot pipeline to return the standard actionable troubleshooting plan.
     """
+    start_time = time.perf_counter()
+
     image_bytes = await file.read()
     if not image_bytes:
         return JSONResponse(status_code=400, content={"error": "Uploaded image file is empty"})
@@ -1104,35 +1106,51 @@ async def troubleshoot_image(file: UploadFile = File(...)):
     content_type = file.content_type or "image/jpeg"
     active_client = gemini_client
 
-    if active_client is not None:
-        try:
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type=content_type)
-            vision_prompt = (
-                "You are an expert Samsung Galaxy device technician. Analyze this device photo and describe "
-                "the visible hardware or display problem in one concise technical sentence (for example: "
-                "'Screen flickers with horizontal lines across display', 'Camera app crashed with black preview', "
-                "'Battery percentage stuck or device not charging', 'Touch screen unresponsive or shattered glass'). "
-                "Output ONLY the concise problem description without any URLs, greetings, or preamble."
-            )
-            caption_response = active_client.models.generate_content(
-                model=MODEL_NAME,
-                contents=[image_part, vision_prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    seed=42,
-                    max_output_tokens=150,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                ),
-            )
-            raw_caption = (caption_response.text or "").strip()
-            detected_query = scrub_urls(raw_caption).strip()
-            if not detected_query:
-                detected_query = "Phone screen display hardware problem"
-        except Exception as e:
-            logger.warning("Image vision analysis failed: %s, falling back to general complaint", e)
-            detected_query = "Screen flickers and battery dies fast"
-    else:
-        detected_query = "Screen flickers and battery dies fast"
+    def _vision_error_response(reason: str) -> ContextDeeplinkResponse:
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.warning("Image vision analysis failed (%s) — returning honest fallback response.", reason)
+        meta = ResponseMeta(
+            latency_ms=elapsed_ms,
+            cache_hit=False,
+            model=MODEL_NAME,
+            cost_usd=0.0,
+        )
+        return ContextDeeplinkResponse(
+            error="image_analysis_failed",
+            message="We couldn't analyze this image right now. Please describe the issue in text instead.",
+            contexts=[],
+            fallback="vision_unavailable",
+            meta=meta,
+        )
+
+    if active_client is None:
+        return _vision_error_response("Gemini client is uninitialized")
+
+    try:
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type=content_type)
+        vision_prompt = (
+            "You are an expert Samsung Galaxy device technician. Analyze this device photo and describe "
+            "the visible hardware or display problem in one concise technical sentence (for example: "
+            "'Screen flickers with horizontal lines across display', 'Camera app crashed with black preview', "
+            "'Battery percentage stuck or device not charging', 'Touch screen unresponsive or shattered glass'). "
+            "Output ONLY the concise problem description without any URLs, greetings, or preamble."
+        )
+        caption_response = active_client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[image_part, vision_prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                seed=42,
+                max_output_tokens=150,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        raw_caption = (caption_response.text or "").strip()
+        detected_query = scrub_urls(raw_caption).strip()
+        if not detected_query:
+            return _vision_error_response("Model produced empty image description")
+    except Exception as e:
+        return _vision_error_response(f"Vision API error: {e}")
 
     # Feed the vision-derived description into the standard troubleshooting pipeline
     return troubleshoot(TroubleshootRequest(query=detected_query))

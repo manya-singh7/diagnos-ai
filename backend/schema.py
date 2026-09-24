@@ -317,13 +317,15 @@ class ResponseMeta(BaseModel):
 class ContextDeeplinkResponse(BaseModel):
     """RAG response containing a list of Goal objects, optional fallback, and operational metadata."""
     contexts: List[Goal] = Field(default_factory=list)
-    fallback: Optional[str] = Field(None, description="Fallback flag when no match is found, e.g. 'no_match'")
+    fallback: Optional[str] = Field(None, description="Fallback flag, e.g. 'no_match' or 'vision_unavailable'")
     meta: Optional[ResponseMeta] = Field(None, description="Operational metadata")
+    error: Optional[str] = Field(None, description="Error code if request or vision processing failed")
+    message: Optional[str] = Field(None, description="Human-readable explanation or guidance")
 
     @model_validator(mode="after")
     def validate_fallback_and_contexts(self) -> "ContextDeeplinkResponse":
-        if self.fallback == "no_match" and len(self.contexts) > 0:
-            raise ValueError("When fallback is 'no_match', contexts must be empty ([])")
+        if self.fallback in ("no_match", "vision_unavailable") and len(self.contexts) > 0:
+            raise ValueError(f"When fallback is '{self.fallback}', contexts must be empty ([])")
         return self
 
 
@@ -375,12 +377,14 @@ class ClarifyResponse(ContextDeeplinkResponse):
 
 class AppendixBInnerResponse(BaseModel):
     contexts: List[Goal] = Field(default_factory=list)
-    fallback: Optional[str] = Field(None, description="Fallback flag when no match is found, e.g. 'no_match'")
+    fallback: Optional[str] = Field(None, description="Fallback flag, e.g. 'no_match' or 'vision_unavailable'")
+    error: Optional[str] = Field(None, description="Error code if request or vision processing failed")
+    message: Optional[str] = Field(None, description="Human-readable explanation or guidance")
 
     @model_validator(mode="after")
     def validate_fallback_and_contexts(self) -> "AppendixBInnerResponse":
-        if self.fallback == "no_match" and len(self.contexts) > 0:
-            raise ValueError("When fallback is 'no_match', contexts must be empty ([])")
+        if self.fallback in ("no_match", "vision_unavailable") and len(self.contexts) > 0:
+            raise ValueError(f"When fallback is '{self.fallback}', contexts must be empty ([])")
         return self
 
 
