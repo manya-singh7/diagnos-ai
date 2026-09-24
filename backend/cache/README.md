@@ -34,15 +34,16 @@ From `python eval/semantic_cache/tune_cache.py` (50 labelled pairs in `eval/sema
 
 ## Live demo
 
-Send the first query of each pair (it goes to Gemini and gets stored), then the second. Watch `GET /v1/cache/stats` between requests: vetoes show up there, not in the response.
+Send the first query of each pair (it goes to Gemini and gets stored), then the second. The demo page reads the `X-Cache-Decision` response header and shows the result next to the HIT/MISS badge and in the reasoning trace.
 
-| Shows | 1st query | 2nd query | Similarity | Expected |
+| Shows | 1st query | 2nd query | Similarity | Demo page shows |
 |---|---|---|---|---|
-| Clean hit | `wifi is not connecting` | `wifi won't connect` | 0.93 | `cache_hit: true`, ~1 ms, `cost_usd: 0` |
-| Polarity veto | `enable dark mode` | `disable dark mode` | 0.94 | `cache_hit: false`; `veto_polarity` +1 |
-| Entity veto | `storage almost full` | `memory almost full` | 0.78 | `cache_hit: false`; `veto_entity` +1 |
+| Clean hit | `wifi is not connecting` | `wifi won't connect` | 0.93 | green "Served from cache — matched …" |
+| Polarity veto | `enable dark mode` | `disable dark mode` | 0.94 | red "Cache VETOED — … but means the opposite" |
 
-The entity pair is only 0.03 above the threshold. If you raise the threshold to 0.80, it becomes a plain low-similarity miss and no longer shows the veto.
+`storage almost full` / `memory almost full` (0.78, entity veto) stays in the test set but is **not for the live demo**. Many users say "memory" when they mean storage, so an audience may not see the veto as correct.
+
+Each `/v1/troubleshoot` response carries `X-Cache-Decision`, e.g. `hit; sim=0.93; matched=wifi won't connect` or `miss_low_sim; sim=0.41`. The matched query is percent-encoded outside printable ASCII. `GET /v1/cache/stats` has the running counts.
 
 ## Deploy notes
 

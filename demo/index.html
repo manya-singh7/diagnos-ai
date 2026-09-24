@@ -332,6 +332,19 @@
       color: #94a3b8;
     }
 
+    .cache-note {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .cache-note-hit {
+      color: #34d399;
+    }
+
+    .cache-note-veto {
+      color: #f87171;
+    }
+
     /* Results section */
     .results-container {
       display: flex;
@@ -666,6 +679,7 @@
       <div class="telemetry-item">
         <span>💾 Cache:</span>
         <span class="cache-badge" id="metaCache">-</span>
+        <span class="cache-note" id="metaCacheNote"></span>
       </div>
       <div class="telemetry-item">
         <span>🤖 Model:</span>
@@ -705,6 +719,7 @@
     const telemetryBar = document.getElementById("telemetryBar");
     const metaLatency = document.getElementById("metaLatency");
     const metaCache = document.getElementById("metaCache");
+    const metaCacheNote = document.getElementById("metaCacheNote");
     const metaModel = document.getElementById("metaModel");
     const metaCost = document.getElementById("metaCost");
 
@@ -901,7 +916,7 @@
         }
 
         const data = await response.json();
-        renderResponse(data);
+        renderResponse(data, parseCacheDecision(response.headers.get("X-Cache-Decision")));
       } catch (err) {
         console.error("Diagnosis error:", err);
         renderError(err.message);
@@ -912,6 +927,27 @@
 
     function jsonPayload(text) {
       return JSON.stringify({ query: text });
+    }
+
+    // "hit; sim=0.93; matched=wifi won't connect" -> { decision, simPct, matched }
+    function parseCacheDecision(header) {
+      const m = /^([a-z_]+)(?:; sim=([\d.]+))?(?:; matched=(.*))?$/.exec(header || "");
+      if (!m) return null;
+      let matched = m[3] || "";
+      try { matched = decodeURIComponent(matched); } catch (e) { /* show as-is */ }
+      return { decision: m[1], simPct: Math.round(parseFloat(m[2] || "0") * 100), matched };
+    }
+
+    function describeCacheDecision(cd) {
+      if (!cd) return null;
+      if (cd.decision === "hit") {
+        return `Served from cache — matched '${cd.matched}' (${cd.simPct}%)`;
+      }
+      if (cd.decision.startsWith("veto_")) {
+        const why = cd.decision === "veto_polarity" ? "means the opposite" : "is about a different setting";
+        return `Cache VETOED — looked ${cd.simPct}% similar to '${cd.matched}' but ${why}`;
+      }
+      return null;
     }
 
     function renderError(errMsg) {
@@ -930,7 +966,7 @@
       `;
     }
 
-    function buildReasoningTrace(goal, gIdx, contexts, meta) {
+    function buildReasoningTrace(goal, gIdx, contexts, meta, cacheDecision) {
       if (!goal) return [];
 
       const traceSteps = [];
@@ -1000,11 +1036,15 @@
       if (metaObj.cache_hit) {
         traceSteps.push(`Served from semantic cache in ${metaObj.latency_ms ?? 0}ms`);
       }
+      const cacheLine = describeCacheDecision(cacheDecision);
+      if (cacheLine) {
+        traceSteps.push(cacheLine);
+      }
 
       return traceSteps;
     }
 
-    function renderResponse(data) {
+    function renderResponse(data, cacheDecision) {
       // Extract contexts, fallback, and meta across both Flat and Appendix B shapes
       let contexts = [];
       let fallback = null;
@@ -1032,6 +1072,11 @@
         metaCache.textContent = "MISS";
         metaCache.className = "cache-badge cache-miss";
       }
+      const cacheNote = describeCacheDecision(cacheDecision);
+      metaCacheNote.textContent = cacheNote || "";
+      metaCacheNote.className = cacheNote
+        ? `cache-note ${cacheDecision.decision === "hit" ? "cache-note-hit" : "cache-note-veto"}`
+        : "cache-note";
       telemetryBar.style.display = "flex";
 
       // Case: Vision analysis unavailable
@@ -1069,7 +1114,7 @@
         const scorePct = Math.round((goal.score || 0) * 100);
 
         // Synthesize client-side reasoning trace from existing response fields
-        const traceItems = buildReasoningTrace(goal, gIdx, contexts, meta);
+        const traceItems = buildReasoningTrace(goal, gIdx, contexts, meta, cacheDecision);
         let traceSectionHtml = "";
         if (traceItems.length > 0) {
           const traceListHtml = traceItems

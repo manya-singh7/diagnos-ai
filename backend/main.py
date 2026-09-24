@@ -6,9 +6,10 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
+from urllib.parse import quote
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -60,6 +61,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Cache-Decision"],
 )
 
 # ---------------------------------------------------------------------------
@@ -886,8 +888,23 @@ def generate_query_variations(
 # Step 4: REST Endpoints
 # ---------------------------------------------------------------------------
 
+# Printable ASCII except '%' passes through as-is; anything else is percent-encoded
+# so a non-latin-1 query can't break the header (the demo page decodes it).
+_HEADER_SAFE_CHARS = "".join(chr(c) for c in range(32, 127) if chr(c) != "%")
+
+
+def _cache_decision_header(info: Dict[str, Any]) -> str:
+    """e.g. "hit; sim=0.93; matched=wifi won't connect" or "miss_low_sim; sim=0.41"."""
+    parts = [str(info.get("decision", "unknown"))]
+    if isinstance(info.get("similarity"), (int, float)):
+        parts.append(f"sim={info['similarity']:.2f}")
+    if info.get("matched_query") and (parts[0] == "hit" or parts[0].startswith("veto_")):
+        parts.append("matched=" + quote(str(info["matched_query"])[:200], safe=_HEADER_SAFE_CHARS))
+    return "; ".join(parts)
+
+
 @app.post("/v1/troubleshoot", response_model=Union[ContextDeeplinkResponse, AppendixBResponse])
-def troubleshoot(payload: TroubleshootRequest):
+def troubleshoot(payload: TroubleshootRequest, http_response: Response = None):  # type: ignore[assignment]  # None for internal calls
     """
     Takes a customer complaint and optional untrusted SIIS text and returns an actionable plan.
     Returns up to 2 ranked Goals in contexts, ordered by confidence score descending.
@@ -902,6 +919,8 @@ def troubleshoot(payload: TroubleshootRequest):
     query = enrich_query(raw_query)
 
     cached_response, cache_info = cache_lookup(raw_query)
+    if http_response is not None:
+        http_response.headers["X-Cache-Decision"] = _cache_decision_header(cache_info)
     if cached_response is not None:
         try:
             cached_inner = cached_response.get("response") or cached_response

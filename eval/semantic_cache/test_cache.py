@@ -232,6 +232,40 @@ def test_troubleshoot_vetoed_query_goes_to_gemini_and_no_match_is_not_cached(api
     assert cache_stats()["entries"] == 1  # the no_match was not added
 
 
+def test_cache_decision_header_on_hit_veto_and_miss(api):
+    main, client, _ = api
+    cache_store("wifi won't connect", _ok_response(), [])
+    cache_store("enable dark mode", _ok_response(), [])
+
+    hit = client.post("/v1/troubleshoot", json={"query": "wifi is not connecting"})
+    veto = client.post("/v1/troubleshoot", json={"query": "disable dark mode"})
+    miss = client.post("/v1/troubleshoot", json={"query": "camera photos are blurry"})
+
+    assert hit.headers["X-Cache-Decision"].startswith("hit; sim=")
+    assert hit.headers["X-Cache-Decision"].endswith("; matched=wifi won't connect")
+    assert veto.headers["X-Cache-Decision"].startswith("veto_polarity; sim=")
+    assert veto.headers["X-Cache-Decision"].endswith("; matched=enable dark mode")
+    assert miss.headers["X-Cache-Decision"].startswith("miss_low_sim; sim=")
+    assert "matched=" not in miss.headers["X-Cache-Decision"]
+    assert "X-Cache-Decision" not in json.dumps(hit.json())  # body untouched
+
+
+def test_cache_decision_header_survives_non_latin1_query(api):
+    main, client, _ = api
+    query = "wifi 📶 “won’t” connect 100%"
+    cache_store(query, _ok_response(), [])
+    r = client.post("/v1/troubleshoot", json={"query": query})
+    assert r.status_code == 200
+    assert r.headers["X-Cache-Decision"].startswith("hit; ")
+    assert "100%25" in r.headers["X-Cache-Decision"]
+
+
+def test_cache_decision_header_is_exposed_to_browsers(api):
+    main, client, _ = api
+    r = client.post("/v1/troubleshoot", json={"query": "anything"}, headers={"Origin": "http://localhost:3000"})
+    assert "X-Cache-Decision" in r.headers.get("access-control-expose-headers", "")
+
+
 def test_cache_stats_endpoint(api):
     main, client, _ = api
     body = client.get("/v1/cache/stats").json()
