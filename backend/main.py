@@ -86,10 +86,10 @@ RESPONSE_SHAPE: str = os.getenv("RESPONSE_SHAPE", "flat")
 ENABLE_QUERY_VARIATIONS: bool = os.getenv("ENABLE_QUERY_VARIATIONS", "false").strip().lower() in ("true", "1", "yes")
 
 try:
-    from cache import cache_store, is_cache_ready
+    from cache import cache_lookup, cache_stats, cache_store, is_cache_ready
 except ImportError:
     try:
-        from backend.cache import cache_store, is_cache_ready
+        from backend.cache import cache_lookup, cache_stats, cache_store, is_cache_ready
     except ImportError:
         def cache_store(query: str, response: Any, variations: List[str]) -> None:
             """Pass-through stub for Person C cache store integration."""
@@ -97,6 +97,12 @@ except ImportError:
 
         def is_cache_ready() -> bool:
             return True
+
+        def cache_lookup(query: str) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+            return None, {"decision": "disabled"}
+
+        def cache_stats() -> Dict[str, Any]:
+            return {"enabled": False}
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +177,12 @@ def health_details():
             "catalog_ready": index_ready,
         },
     )
+
+
+@app.get("/v1/cache/stats")
+def get_cache_stats():
+    """Semantic cache counters: hits, misses, each veto type, hit_rate, avg_lookup_ms, entries."""
+    return cache_stats()
 
 
 
@@ -888,6 +900,26 @@ def troubleshoot(payload: TroubleshootRequest):
     raw_siis = payload.siis_response
 
     query = enrich_query(raw_query)
+
+    cached_response, cache_info = cache_lookup(raw_query)
+    if cached_response is not None:
+        try:
+            cached_inner = cached_response.get("response") or cached_response
+            cached_goals = [Goal(**g) for g in cached_inner.get("contexts", [])]
+            return serialize_response(
+                contexts=cached_goals,
+                fallback=cached_inner.get("fallback"),
+                meta=ResponseMeta(
+                    latency_ms=int((time.perf_counter() - start_time) * 1000),
+                    cache_hit=True,
+                    model=MODEL_NAME,
+                    cost_usd=0.0,
+                ),
+                query=raw_query,
+                query_variations=cached_response.get("query_variations") or cache_info.get("variations", []),
+            )
+        except Exception as e:
+            logger.warning("Cached response could not be rebuilt, falling through to Gemini: %s", e)
 
     active_client = gemini_client
     token_usage = {"prompt_tokens": 0, "candidates_tokens": 0}

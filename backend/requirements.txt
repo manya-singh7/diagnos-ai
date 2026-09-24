@@ -1,0 +1,20 @@
+# API
+fastapi==0.128.8
+uvicorn==0.39.0
+pydantic==2.13.5
+python-dotenv==1.2.1
+python-multipart==0.0.20  # required by FastAPI for the UploadFile route (/v1/troubleshoot-image)
+
+# LLM
+google-genai==1.47.0
+
+# Retrieval (BM25 deeplink catalog)
+rank-bm25==0.2.2
+
+# Semantic cache: ONNX embeddings, no torch
+fastembed==0.7.4
+numpy==2.0.2
+
+# Tests (eval/)
+pytest==8.4.2
+httpx==0.28.1
