@@ -242,6 +242,7 @@ class Goal(BaseModel):
     title: str
     actions: List[Action]
     score: float
+    self_critique: Optional[str] = Field(None, description="Model explanation of plan relevance and safety")
 
     @field_validator("goal")
     @classmethod
