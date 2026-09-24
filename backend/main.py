@@ -5,7 +5,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
@@ -585,33 +585,57 @@ def _load_deeplink_catalog() -> List[Dict[str, Any]]:
     return _CATALOG_CACHE
 
 
+@overload
 def get_deeplinks(
     action_name: str,
     description: str = "",
     category: Optional[ActionCategory] = None,
     steps: Optional[List[str]] = None,
-) -> Optional[Deeplink]:
+    return_score: Literal[False] = False,
+) -> Optional[Deeplink]: ...
+
+
+@overload
+def get_deeplinks(
+    action_name: str,
+    description: str = "",
+    category: Optional[ActionCategory] = None,
+    steps: Optional[List[str]] = None,
+    return_score: Literal[True] = ...,
+) -> Tuple[Optional[Deeplink], Optional[float]]: ...
+
+
+def get_deeplinks(
+    action_name: str,
+    description: str = "",
+    category: Optional[ActionCategory] = None,
+    steps: Optional[List[str]] = None,
+    return_score: bool = False,
+) -> Union[Optional[Deeplink], Tuple[Optional[Deeplink], Optional[float]]]:
     """
     Single isolated retrieval function. Maps an action screen to a catalog URI or dummy_positive.
     Strictly follows deeplink guard rules:
-    - manual -> no deeplink (None)
-    - critical action that isn't a Settings screen (restart, reboot, safe mode, factory reset) -> no deeplink (None)
+    - manual -> no deeplink (None), match_score is None (not a retrieval candidate)
+    - critical action that isn't a Settings screen (restart, reboot, safe mode, factory reset) -> no deeplink (None), match_score is None
     - auto + strong match (>= MIN_RELEVANCE_THRESHOLD) -> catalog deeplink
     - auto + no match but a real Settings screen -> bixby://dummy_positive
     - weak match / below threshold and not a Settings screen -> no deeplink (None)
+
+    If return_score is True, returns (deeplink, match_score).
+    If return_score is False (default), returns deeplink directly for 100% backward compatibility.
     """
-    # Rule: manual -> no deeplink
+    # Rule: manual -> no deeplink (not a retrieval candidate)
     if category == ActionCategory.manual or str(category) == "manual":
-        return None
+        return (None, None) if return_score else None
 
     combined_text = f"{action_name} {description}"
     if steps:
         combined_text += " " + " ".join(steps)
 
-    # Rule: critical action that isn't a Settings screen -> no deeplink
+    # Rule: critical action that isn't a Settings screen -> no deeplink (not a retrieval candidate)
     is_critical = (category == ActionCategory.critical or str(category) == "critical")
     if is_critical and _is_critical_non_settings(combined_text):
-        return None
+        return (None, None) if return_score else None
 
     # BM25 Retrieval via Person D's retrieval package
     try:
@@ -623,27 +647,29 @@ def get_deeplinks(
     matches = retriever.retrieve(f"{action_name} {description}", top_k=1)
     if matches:
         best_item, best_score = matches[0]
+        match_score = float(best_score)
     else:
-        best_item, best_score = None, 0.0
+        best_item, match_score = None, 0.0
 
     # Rule: auto + strong match -> catalog deeplink
-    if best_item and best_score >= MIN_RELEVANCE_THRESHOLD:
-        return Deeplink(
+    if best_item and match_score >= MIN_RELEVANCE_THRESHOLD:
+        dl = Deeplink(
             deeplink=best_item["deeplink"],
             description=best_item.get("description", action_name),
             message=best_item.get("message", ""),
         )
+        return (dl, match_score) if return_score else dl
 
     # If critical and not matched to a catalog settings screen: no deeplink
     if is_critical:
-        return None
+        return (None, match_score) if return_score else None
 
     # Rule: auto + no match but a real Settings screen -> bixby://dummy_positive
     if _is_real_settings_screen(combined_text):
-        return _DEFAULT_DEEPLINK
+        return (_DEFAULT_DEEPLINK, match_score) if return_score else _DEFAULT_DEEPLINK
 
     # Below threshold and not a Settings screen -> no deeplink
-    return None
+    return (None, match_score) if return_score else None
 
 
 # Backwards compatibility alias
@@ -948,20 +974,35 @@ def troubleshoot(payload: TroubleshootRequest):
         cache_store(raw_query, response_obj, variations)
         return response_obj
 
-    # Attach deeplinks and enforce category constraints across all returned goals
+    # Attach deeplinks and compute blended confidence score for each goal
     for goal in goals:
+        retrieval_scores: List[float] = []
         for action in goal.actions:
-            deeplink = get_deeplinks(
+            deeplink, match_score = get_deeplinks(
                 action_name=action.actionName,
                 description=action.description,
                 category=action.category,
                 steps=action.stepGroups[0].steps if action.stepGroups else None,
+                return_score=True,
             )
+            # Only consider actions that were genuine retrieval candidates (exclude manual / critical-guarded)
+            if match_score is not None:
+                retrieval_scores.append(match_score)
+
             for step_group in action.stepGroups:
                 step_group.actionableDeeplink = deeplink
 
+        # Blend score if retrieval candidates existed; otherwise retain LLM confidence
+        if retrieval_scores:
+            avg_retrieval = sum(retrieval_scores) / len(retrieval_scores)
+            blended_score = 0.6 * goal.score + 0.4 * avg_retrieval
+            goal.score = round(max(0.0, min(1.0, blended_score)), 4)
+
         # Order actions within goal: auto (non-invasive) -> manual -> critical (destructive) last
         goal.actions.sort(key=lambda a: _CATEGORY_ORDER.get(a.category, 1))
+
+    # Re-sort goals descending by the new blended score
+    goals.sort(key=lambda g: g.score, reverse=True)
 
     # Final validator on finished response: every actionableDeeplink must be in catalog or dummy_positive
     validate_and_sanitize_deeplinks(goals)
