@@ -34,16 +34,24 @@ From `python eval/semantic_cache/tune_cache.py` (50 labelled pairs in `eval/sema
 
 ## Live demo
 
-Send the first query of each pair (it goes to Gemini and gets stored), then the second. The demo page reads the `X-Cache-Decision` response header and shows the result next to the HIT/MISS badge and in the reasoning trace.
+The demo page reads the `X-Cache-Decision` response header and shows the result next to the HIT/MISS badge and in the reasoning trace.
 
-| Shows | 1st query | 2nd query | Similarity | Demo page shows |
+| Shows | Pre-warm (stored) | Live query | Similarity | Demo page shows |
 |---|---|---|---|---|
 | Clean hit | `wifi is not connecting` | `wifi won't connect` | 0.93 | green "Served from cache — matched …" |
-| Polarity veto | `enable dark mode` | `disable dark mode` | 0.94 | red "Cache VETOED — … but means the opposite" |
+| Polarity veto | `disable dark mode` | `enable dark mode` | 0.94 | red "Cache VETOED — … but means the opposite" |
+
+Order matters for the veto: `disable dark mode` must be the stored one, and `enable dark mode` is sent live.
+
+**Pre-warm before the demo, and confirm each pre-warm query was stored:**
+
+1. Note `stores` in `GET /v1/cache/stats`.
+2. Send the pre-warm query and check that `stores` went up by one. With `CACHE_DEBUG=true`, `GET /v1/cache/entries` shows it under `entries`.
+3. If `stores` did not go up, Gemini failed and the result was correctly *not* cached. The live query will then show a plain miss instead of the hit or veto. `recent_stores` shows `skipped: fallback=no_match`, and the server log shows why; look for `429 RESOURCE_EXHAUSTED`. Re-send the pre-warm query before going live.
+
+The pre-warm queries are the only Gemini calls the demo needs: the live hit is served from cache, and the live veto makes one more. The free tier allows 20 requests per day for `gemini-3.6-flash`, and a failing query can use 3 of them.
 
 `storage almost full` / `memory almost full` (0.78, entity veto) stays in the test set but is **not for the live demo**. Many users say "memory" when they mean storage, so an audience may not see the veto as correct.
-
-**Check the first query was stored before sending the second.** If Gemini fails on it (the 8s SLA fallback returns `no_match`), it is correctly *not* cached, and the second query then shows a plain miss instead of the veto. `stores` in `/v1/cache/stats` should go up by one after the first query.
 
 Each `/v1/troubleshoot` response carries `X-Cache-Decision`, e.g. `hit; sim=0.93; matched=wifi won't connect` or `miss_low_sim; sim=0.41`. The matched query is percent-encoded outside printable ASCII. `GET /v1/cache/stats` has the running counts.
 
