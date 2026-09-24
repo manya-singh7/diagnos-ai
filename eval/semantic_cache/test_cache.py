@@ -417,8 +417,11 @@ def critique_api(monkeypatch):
 
     def fake_critique(goals, query, **kwargs):
         calls["critique"] += 1
-        # Keep the Bluetooth plan at half relevance, reject the network reset.
-        return [(True, 0.5), (False, 0.1)], {"prompt_tokens": 0, "candidates_tokens": 0}
+        # (is_relevant, relevance_score, critique_text): keep Bluetooth at half relevance, reject the reset.
+        return [
+            (True, 0.5, "Directly targets the Bluetooth toggle."),
+            (False, 0.1, "A network reset is too disruptive for this."),
+        ], {"prompt_tokens": 0, "candidates_tokens": 0}
 
     monkeypatch.setenv("ENABLE_SELF_CRITIQUE", "true")
     monkeypatch.setattr(main, "gemini_client", MagicMock(name="mock_gemini_client"))
@@ -444,10 +447,11 @@ def test_cache_miss_stores_the_post_critique_response(critique_api):
 
     assert calls == {"extract": 1, "critique": 1}  # the critique branch really ran
     assert [g["title"] for g in first["contexts"]] == ["Bluetooth settings"]  # rejected plan dropped
+    assert first["contexts"][0]["self_critique"] == "Directly targets the Bluetooth toggle."
 
     stored, info = cache_lookup("turn bluetooth on")
     assert info["decision"] == "hit"
-    assert stored["contexts"] == first["contexts"]  # final response, incl. critique-scaled score
+    assert stored["contexts"] == first["contexts"]  # final response, incl. critique score and explanation
 
     second = client.post("/v1/troubleshoot", json={"query": "turn bluetooth on"}).json()
     assert second["meta"]["cache_hit"] is True
