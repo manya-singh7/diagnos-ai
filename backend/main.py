@@ -338,6 +338,7 @@ def extract_goals(
     user_prompt = build_user_prompt(query, clean_siis)
     messages = [user_prompt]
 
+    raw_text = ""
     for attempt in range(max_retries + 1):
         try:
             full_prompt = (
@@ -394,13 +395,49 @@ def extract_goals(
 
         except Exception as e:
             error_msg = str(e)
+            err_lower = error_msg.lower()
+            is_transient = any(
+                err_pattern in err_lower
+                for err_pattern in ["503", "unavailable", "timeout", "timed out", "connection"]
+            ) or isinstance(e, (ConnectionError, TimeoutError))
+
+            # Option C: Strict <= 8000ms SLA ceiling for transient network/API errors
+            if is_transient:
+                if attempt == 0:
+                    logger.warning(
+                        "Transient API error on attempt 1/2: %s | Backing off for 1.5s before single retry...",
+                        error_msg,
+                    )
+                    time.sleep(1.5)
+                    continue
+                else:
+                    logger.warning(
+                        "Transient API error persisted on attempt 2/2: %s | Aborting to preserve <= 8000ms SLA, returning fallback.",
+                        error_msg,
+                    )
+                    return [], token_usage
+
+            # Standard Pydantic schema validation error path (completely unchanged)
             if attempt < max_retries:
+                logger.warning(
+                    "Goal validation attempt %d/%d failed with error: %s | Raw LLM output: %s",
+                    attempt + 1,
+                    max_retries + 1,
+                    error_msg,
+                    raw_text,
+                )
                 retry_msg = (
                     f"The previous response failed schema validation with error:\n{error_msg}\n"
                     f"Please fix the error and return a compliant JSON object meeting all constraints."
                 )
                 messages.append(retry_msg)
             else:
+                logger.warning(
+                    "Goal validation retries exhausted (%d attempts). Final error: %s | Raw LLM output: %s",
+                    max_retries + 1,
+                    error_msg,
+                    raw_text,
+                )
                 # Retries exhausted; return empty list to trigger fallback: "no_match"
                 return [], token_usage
 
