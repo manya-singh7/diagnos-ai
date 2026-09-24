@@ -3,9 +3,16 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
+
+# Ensure backend directory is in sys.path so schema, retrieval, and cache resolve
+# regardless of whether the app is started from the repo root or inside backend/
+_backend_dir = str(Path(__file__).resolve().parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile
