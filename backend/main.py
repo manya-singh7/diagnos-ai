@@ -3,13 +3,20 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
 from urllib.parse import quote
 
+# Ensure backend directory is in sys.path so schema, retrieval, and cache resolve
+# regardless of whether the app is started from the repo root or inside backend/
+_backend_dir = str(Path(__file__).resolve().parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Query, Response, UploadFile
+from fastapi import FastAPI, File, Form, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -1334,11 +1341,14 @@ def clarify(payload: ClarifyRequest):
 
 
 @app.post("/v1/troubleshoot-image", response_model=Union[ContextDeeplinkResponse, AppendixBResponse])
-async def troubleshoot_image(file: UploadFile = File(...)):
+async def troubleshoot_image(
+    file: UploadFile = File(...),
+    query: Optional[str] = Form(None),
+):
     """
-    Accepts an uploaded device photo, describes the visible device troubleshooting problem
-    using exactly 1 vision-capable Gemini API call, and feeds that description into the
-    core /v1/troubleshoot pipeline to return the standard actionable troubleshooting plan.
+    Accepts an uploaded device photo and optional typed complaint text.
+    Describes the visible device troubleshooting problem using exactly 1 vision-capable Gemini API call.
+    If query text is also provided, combines typed text with vision context before calling /v1/troubleshoot.
     """
     start_time = time.perf_counter()
 
@@ -1395,5 +1405,14 @@ async def troubleshoot_image(file: UploadFile = File(...)):
     except Exception as e:
         return _vision_error_response(f"Vision API error: {e}")
 
-    # Feed the vision-derived description into the standard troubleshooting pipeline
-    return troubleshoot(TroubleshootRequest(query=detected_query))
+    # Clean and sanitize optional typed complaint
+    clean_typed_query = scrub_urls(query).strip() if query else ""
+
+    # Combine typed query + vision context when both exist, or use vision caption directly
+    if clean_typed_query:
+        final_query = f"{clean_typed_query}. Visual context: {detected_query}"
+    else:
+        final_query = detected_query
+
+    # Feed the combined or vision-derived description into the standard troubleshooting pipeline
+    return troubleshoot(TroubleshootRequest(query=final_query))

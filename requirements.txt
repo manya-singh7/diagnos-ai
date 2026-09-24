@@ -1,0 +1,17 @@
+# Diagnos AI - Smart Guided Troubleshooting Engine
+# Core API & Schema
+fastapi>=0.110.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+python-multipart>=0.0.9
+
+# AI & Multimodal SDK
+google-genai>=2.0.0
+
+# Information Retrieval & Configuration
+rank-bm25>=0.2.2
+python-dotenv>=1.0.0
+
+# Evaluation, Smoke Testing & Multimodal Test Harness
+requests>=2.31.0
+pillow>=10.0.0
