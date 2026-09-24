@@ -32,6 +32,8 @@
   {"a": "phone charging slowly", "b": "battery draining fast", "expected": "veto", "note": "charging vs drain"},
   {"a": "camera photos are blurry", "b": "battery drains fast", "expected": "veto", "note": "different domain"},
   {"a": "blutooth not wrking", "b": "wifi not wrking", "expected": "veto", "note": "typo + entity swap"},
+  {"a": "storage almost full", "b": "memory almost full", "expected": "veto", "note": "entity veto above threshold (sim ~0.78): storage vs RAM"},
+  {"a": "notifications not working", "b": "notification sound not working", "expected": "veto", "note": "entity veto above threshold (sim ~0.77)"},
   {"a": "bluetooth wont connect lol", "b": "wifi wont connect lol", "expected": "veto", "note": "casual + entity swap"},
 
   {"a": "wifi keeps disconnecting", "b": "wifi drops connection all the time", "expected": "hit", "note": "paraphrase"},
