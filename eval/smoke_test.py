@@ -19,12 +19,15 @@ Output matches the style of eval/test_retrieval.py ([PASS]/[FAIL] and final summ
 """
 
 import io
+import os
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+# Enable ANSI escape sequence processing on Windows consoles
+os.system("")
 # Ensure proper Unicode display on Windows consoles (e.g. UTF-8 characters)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -70,12 +73,22 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
     passed_count = 0
     total_count = 0
 
-    def record(name: str, passed: bool, detail: str = ""):
+    category_counts = {
+        "Core Pipeline": [0, 0],
+        "Edge Cases": [0, 0],
+        "Multimodal": [0, 0],
+    }
+
+    def record(name: str, passed: bool, detail: str = "", category: str = "Core Pipeline"):
         nonlocal passed_count, total_count
         total_count += 1
+        if category in category_counts:
+            category_counts[category][1] += 1
         status = "[PASS]" if passed else "[FAIL]"
         if passed:
             passed_count += 1
+            if category in category_counts:
+                category_counts[category][0] += 1
         print(f"{status} {name}")
         if detail:
             print(f"       Detail: {detail}")
@@ -176,6 +189,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 f"POST /v1/troubleshoot [Off-Domain]: '{nonsense_query}'",
                 False,
                 f"http_status={r.status_code}, body={r.text[:200]}",
+                category="Edge Cases",
             )
         else:
             resp_json = r.json()
@@ -188,9 +202,10 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 f"POST /v1/troubleshoot [Off-Domain]: '{nonsense_query}' triggers fallback",
                 success,
                 f"fallback='{fallback}', contexts_len={len(contexts)} | latency={elapsed_ms}ms",
+                category="Edge Cases",
             )
     except Exception as e:
-        record(f"POST /v1/troubleshoot [Off-Domain]: '{nonsense_query}'", False, str(e))
+        record(f"POST /v1/troubleshoot [Off-Domain]: '{nonsense_query}'", False, str(e), category="Edge Cases")
 
     # -----------------------------------------------------------------------
     # Test 4: POST /v1/clarify without answer (close-scored hypotheses)
@@ -215,6 +230,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 "POST /v1/clarify [Ambiguous]: Expects needs_clarification=True",
                 False,
                 f"http_status={r.status_code}, body={r.text[:200]}",
+                category="Edge Cases",
             )
         else:
             body = r.json()
@@ -225,9 +241,10 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 "POST /v1/clarify [Ambiguous]: Returns needs_clarification=True and question",
                 success,
                 f"needs_clarification={needs_clar} | question='{question}'",
+                category="Edge Cases",
             )
     except Exception as e:
-        record("POST /v1/clarify [Ambiguous]: Expects needs_clarification=True", False, str(e))
+        record("POST /v1/clarify [Ambiguous]: Expects needs_clarification=True", False, str(e), category="Edge Cases")
 
     # -----------------------------------------------------------------------
     # Test 5: POST /v1/clarify with answer provided
@@ -255,6 +272,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 "POST /v1/clarify [Answered]: Folds answer into query and re-ranks",
                 False,
                 f"http_status={r.status_code}, body={r.text[:200]}",
+                category="Edge Cases",
             )
         else:
             body = r.json()
@@ -268,9 +286,10 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 success,
                 f"needs_clarification={needs_clar} | top_title='{top_title}' | "
                 f"contexts={len(contexts)} | latency={elapsed_ms}ms",
+                category="Edge Cases",
             )
     except Exception as e:
-        record("POST /v1/clarify [Answered]: Folds answer into query and re-ranks", False, str(e))
+        record("POST /v1/clarify [Answered]: Folds answer into query and re-ranks", False, str(e), category="Edge Cases")
 
     # -----------------------------------------------------------------------
     # Test 6: POST /v1/troubleshoot-image with test image file
@@ -292,6 +311,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 "POST /v1/troubleshoot-image: Processes test image and returns plan",
                 False,
                 f"http_status={r.status_code}, body={r.text[:200]}",
+                category="Multimodal",
             )
         else:
             body = r.json()
@@ -303,15 +323,35 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
                 "POST /v1/troubleshoot-image: Processes test image and returns actionable plan",
                 success,
                 f"top_title='{top_title}' | contexts={len(contexts)} | latency={elapsed_ms}ms",
+                category="Multimodal",
             )
     except Exception as e:
-        record("POST /v1/troubleshoot-image: Processes test image and returns plan", False, str(e))
+        record("POST /v1/troubleshoot-image: Processes test image and returns plan", False, str(e), category="Multimodal")
 
     # -----------------------------------------------------------------------
     # Final Summary
     # -----------------------------------------------------------------------
     print("=" * 75)
     print(f"SMOKE TEST SUMMARY: {passed_count}/{total_count} PASSED")
+    print("=" * 75)
+
+    COLOR_GREEN = "\033[92m\033[1m"
+    COLOR_RED = "\033[91m\033[1m"
+    COLOR_RESET = "\033[0m"
+
+    is_all_passed = (passed_count == total_count and total_count > 0)
+    status_line = (
+        f"{COLOR_GREEN}SYSTEM STATUS: READY FOR DEMO{COLOR_RESET}"
+        if is_all_passed
+        else f"{COLOR_RED}SYSTEM STATUS: ISSUES DETECTED — SEE ABOVE{COLOR_RESET}"
+    )
+
+    core_desc = f"Core Pipeline ({category_counts['Core Pipeline'][0]}/{category_counts['Core Pipeline'][1]}: Health, 4 Domains)"
+    edge_desc = f"Edge Cases ({category_counts['Edge Cases'][0]}/{category_counts['Edge Cases'][1]}: Off-Domain, Clarify)"
+    multi_desc = f"Multimodal ({category_counts['Multimodal'][0]}/{category_counts['Multimodal'][1]}: Vision Upload)"
+
+    print(status_line)
+    print(f"Categories: {core_desc} | {edge_desc} | {multi_desc}")
     print("=" * 75)
 
     return passed_count == total_count
