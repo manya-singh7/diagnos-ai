@@ -15,7 +15,8 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -116,6 +117,16 @@ def _reset_stats() -> None:
 
 _reset_stats()
 
+# Recent activity for cache_debug(): what was looked up / stored, and why not.
+_RECENT_LOG_SIZE = 50
+_recent_lookups: Deque[Dict[str, Any]] = deque(maxlen=_RECENT_LOG_SIZE)
+_recent_stores: Deque[Dict[str, Any]] = deque(maxlen=_RECENT_LOG_SIZE)
+
+
+def _log_store(query: Any, result: str) -> None:
+    with _store_lock:
+        _recent_stores.append({"at": time.time(), "query": query, "result": result})
+
 
 def cache_clear() -> None:
     """Drops every entry and resets stats. Intended for tests and tuning."""
@@ -126,6 +137,8 @@ def cache_clear() -> None:
         _entries, _query_index = {}, {}
         _next_entry_id = 0
         _reset_stats()
+        _recent_lookups.clear()
+        _recent_stores.clear()
 
 
 def _norm_key(query: str) -> str:
@@ -170,6 +183,7 @@ def cache_store(query: str, response: Any, variations: List[str]) -> None:
         if fallback == "no_match" or not contexts or error:
             with _store_lock:
                 _stats["stores_skipped"] += 1
+            _log_store(query, f"skipped: {'fallback=' + fallback if fallback else 'error=' + error if error else 'empty contexts'}")
             return
 
         key = _norm_key(query)
@@ -194,7 +208,9 @@ def cache_store(query: str, response: Any, variations: List[str]) -> None:
                 # Same query again: refresh the response, keep the existing vectors.
                 _entries[existing].update(response=dump, stored_at=entry["stored_at"])
                 _stats["stores"] += 1
-                return
+        if existing is not None:
+            _log_store(query, "refreshed")
+            return
 
         # Embed outside the lock; onnxruntime inference is thread-safe.
         vectors = _embed(texts)
@@ -212,8 +228,13 @@ def cache_store(query: str, response: Any, variations: List[str]) -> None:
             _row_entry.extend([entry_id] * len(texts))
             _row_text.extend(texts)
             _stats["stores"] += 1
+        _log_store(query, f"stored ({len(texts)} vector{'s' if len(texts) != 1 else ''})")
     except Exception as e:
         logger.warning("cache_store failed (ignored): %s", e)
+        try:
+            _log_store(query if isinstance(query, str) else repr(query), f"failed: {e}")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -358,13 +379,20 @@ def _threshold() -> float:
         return DEFAULT_THRESHOLD
 
 
-def _record(info: Dict[str, Any]) -> None:
+def _record(info: Dict[str, Any], query: Any) -> None:
     with _store_lock:
         _stats["lookups"] += 1
         key = {"hit": "hits", "error": "errors"}.get(info["decision"], info["decision"])
         if key in _stats:
             _stats[key] += 1
         _stats["total_lookup_ms"] += info.get("lookup_ms", 0.0)
+        _recent_lookups.append({
+            "at": time.time(),
+            "query": query,
+            "decision": info["decision"],
+            "similarity": info.get("similarity"),
+            "matched_query": info.get("matched_query"),
+        })
 
 
 def cache_lookup(query: str, threshold: Optional[float] = None) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
@@ -382,7 +410,7 @@ def cache_lookup(query: str, threshold: Optional[float] = None) -> Tuple[Optiona
             empty = _matrix.shape[0] == 0
         if not query or not query.strip() or empty:
             info["lookup_ms"] = round((time.perf_counter() - start) * 1000, 2)
-            _record(info)
+            _record(info, query)
             return None, info
 
         q_vec = _embed([query.strip()])[0]
@@ -411,13 +439,13 @@ def cache_lookup(query: str, threshold: Optional[float] = None) -> Tuple[Optiona
                 response = entry["response"]
 
         info["lookup_ms"] = round((time.perf_counter() - start) * 1000, 2)
-        _record(info)
+        _record(info, query)
         return response, info
     except Exception as e:
         logger.warning("cache_lookup failed (treated as miss): %s", e)
         info.update(decision="error", error=str(e), lookup_ms=round((time.perf_counter() - start) * 1000, 2))
         try:
-            _record(info)
+            _record(info, query)
         except Exception:
             pass
         return None, info
@@ -452,10 +480,37 @@ def cache_stats() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+def cache_debug() -> Dict[str, Any]:
+    """
+    What is actually cached, plus the last 50 lookups and store attempts (with skip reasons).
+    Contains users' raw queries: only expose behind a debug flag.
+    """
+    try:
+        with _store_lock:
+            entries = [
+                {
+                    "id": eid,
+                    "query": e["query"],
+                    "variations": list(e["variations"]),
+                    "features": e["features"],
+                    "stored_at": e["stored_at"],
+                }
+                for eid, e in sorted(_entries.items())
+            ]
+            return {
+                "entries": entries,
+                "recent_lookups": list(_recent_lookups),
+                "recent_stores": list(_recent_stores),
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 __all__ = [
     "cache_store",
     "cache_lookup",
     "cache_stats",
+    "cache_debug",
     "is_cache_ready",
     "cache_clear",
     "extract_features",

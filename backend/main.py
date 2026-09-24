@@ -88,10 +88,10 @@ RESPONSE_SHAPE: str = os.getenv("RESPONSE_SHAPE", "flat")
 ENABLE_QUERY_VARIATIONS: bool = os.getenv("ENABLE_QUERY_VARIATIONS", "false").strip().lower() in ("true", "1", "yes")
 
 try:
-    from cache import cache_lookup, cache_stats, cache_store, is_cache_ready
+    from cache import cache_debug, cache_lookup, cache_stats, cache_store, is_cache_ready
 except ImportError:
     try:
-        from backend.cache import cache_lookup, cache_stats, cache_store, is_cache_ready
+        from backend.cache import cache_debug, cache_lookup, cache_stats, cache_store, is_cache_ready
     except ImportError:
         def cache_store(query: str, response: Any, variations: List[str]) -> None:
             """Pass-through stub for Person C cache store integration."""
@@ -104,6 +104,9 @@ except ImportError:
             return None, {"decision": "disabled"}
 
         def cache_stats() -> Dict[str, Any]:
+            return {"enabled": False}
+
+        def cache_debug() -> Dict[str, Any]:
             return {"enabled": False}
 
 
@@ -185,6 +188,17 @@ def health_details():
 def get_cache_stats():
     """Semantic cache counters: hits, misses, each veto type, hit_rate, avg_lookup_ms, entries."""
     return cache_stats()
+
+
+@app.get("/v1/cache/entries", include_in_schema=False)
+def get_cache_entries():
+    """
+    Debug only: stored queries plus recent lookups/stores. Exposes users' queries,
+    so it is 404 unless CACHE_DEBUG=true.
+    """
+    if os.getenv("CACHE_DEBUG", "false").strip().lower() not in ("true", "1", "yes"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return cache_debug()
 
 
 

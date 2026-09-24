@@ -297,6 +297,89 @@ def test_internal_call_without_flag_still_uses_cache(api):
     assert gemini_calls == []
 
 
+def test_live_sequence_where_gemini_failures_are_never_stored(monkeypatch):
+    """
+    Replays a live debugging session after a fresh restart. Gemini returned no_match
+    (8s SLA fallback) for "enable dark mode" and "screen brightness is too high", so
+    neither was stored. That is why "too low" missed at 0.39 (best match: "disable
+    dark mode") instead of being vetoed against "too high" (0.944), and why the only
+    veto was the second "enable dark mode" against the stored "disable dark mode".
+    """
+    import main
+    from fastapi.testclient import TestClient
+    from schema import Goal
+
+    gemini_fails_for = {main.enrich_query(q) for q in ("enable dark mode", "screen brightness is too high")}
+
+    def fake_extract_goals(query, **kwargs):
+        if query in gemini_fails_for:
+            return [], {"prompt_tokens": 0, "candidates_tokens": 0}
+        return [Goal(**_GOAL)], {"prompt_tokens": 0, "candidates_tokens": 0}
+
+    monkeypatch.setattr(main, "extract_goals", fake_extract_goals)
+    client = TestClient(main.app)
+
+    # (query, expected decision, expected similarity, expected best match)
+    sequence = [
+        ("wifi is not connecting", "miss_low_sim", 0.00, None),
+        ("wifi is not connecting", "hit", 1.00, "wifi is not connecting"),
+        ("wifi won't connect", "hit", 0.93, "wifi is not connecting"),
+        ("enable dark mode", "miss_low_sim", 0.11, None),
+        ("disable dark mode", "miss_low_sim", 0.07, None),
+        ("enable dark mode", "veto_polarity", 0.94, "disable dark mode"),
+        ("screen brightness is too high", "miss_low_sim", 0.37, None),
+        ("screen brightness is too low", "miss_low_sim", 0.39, None),
+    ]
+    for query, decision, sim, matched in sequence:
+        header = client.post("/v1/troubleshoot", json={"query": query}).headers["X-Cache-Decision"]
+        expected = f"{decision}; sim={sim:.2f}" + (f"; matched={matched}" if matched else "")
+        assert header == expected, (query, header)
+
+    stats = cache_stats()
+    assert {k: stats[k] for k in ("lookups", "hits", "misses", "veto_polarity", "entries", "stores", "stores_skipped")} == {
+        "lookups": 8, "hits": 2, "misses": 5, "veto_polarity": 1, "entries": 3, "stores": 3, "stores_skipped": 3,
+    }
+
+    debug = cache.cache_debug()
+    assert [e["query"] for e in debug["entries"]] == [
+        "wifi is not connecting", "disable dark mode", "screen brightness is too low",
+    ]
+    skipped = [s["query"] for s in debug["recent_stores"] if s["result"].startswith("skipped")]
+    assert skipped == ["enable dark mode", "enable dark mode", "screen brightness is too high"]
+    vetoes = [(l["query"], l["matched_query"]) for l in debug["recent_lookups"] if l["decision"] == "veto_polarity"]
+    assert vetoes == [("enable dark mode", "disable dark mode")]
+
+
+def test_cache_entries_endpoint_is_gated_by_cache_debug(api, monkeypatch):
+    main, client, _ = api
+    cache_store("turn bluetooth on", _ok_response(), ["enable bluetooth"])
+
+    monkeypatch.delenv("CACHE_DEBUG", raising=False)
+    assert client.get("/v1/cache/entries").status_code == 404
+
+    monkeypatch.setenv("CACHE_DEBUG", "true")
+    body = client.get("/v1/cache/entries").json()
+    assert body["entries"][0]["query"] == "turn bluetooth on"
+    assert body["entries"][0]["variations"] == ["enable bluetooth"]
+    assert body["recent_stores"][-1]["result"] == "stored (2 vectors)"
+    assert "/v1/cache/entries" not in client.get("/openapi.json").json()["paths"]
+
+
+def test_restoring_same_query_refreshes_without_deadlock():
+    import threading
+
+    def store_twice():
+        cache_store("turn bluetooth on", _ok_response(), [])
+        cache_store("Turn Bluetooth On", _ok_response(), [])
+
+    t = threading.Thread(target=store_twice, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert not t.is_alive(), "cache_store deadlocked on the refresh path"
+    assert cache_stats()["entries"] == 1
+    assert [s["result"] for s in cache.cache_debug()["recent_stores"]] == ["stored (1 vector)", "refreshed"]
+
+
 def test_cache_stats_endpoint(api):
     main, client, _ = api
     body = client.get("/v1/cache/stats").json()

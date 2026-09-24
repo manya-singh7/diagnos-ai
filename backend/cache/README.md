@@ -43,6 +43,8 @@ Send the first query of each pair (it goes to Gemini and gets stored), then the 
 
 `storage almost full` / `memory almost full` (0.78, entity veto) stays in the test set but is **not for the live demo**. Many users say "memory" when they mean storage, so an audience may not see the veto as correct.
 
+**Check the first query was stored before sending the second.** If Gemini fails on it (the 8s SLA fallback returns `no_match`), it is correctly *not* cached, and the second query then shows a plain miss instead of the veto. `stores` in `/v1/cache/stats` should go up by one after the first query.
+
 Each `/v1/troubleshoot` response carries `X-Cache-Decision`, e.g. `hit; sim=0.93; matched=wifi won't connect` or `miss_low_sim; sim=0.41`. The matched query is percent-encoded outside printable ASCII. `GET /v1/cache/stats` has the running counts.
 
 ## Deploy notes
@@ -50,6 +52,7 @@ Each `/v1/troubleshoot` response carries `X-Cache-Decision`, e.g. `hit; sim=0.93
 - **Build step:** from `backend/`, run `python -m cache`. It downloads the model (~87 MB, about 1 minute) into `backend/.fastembed_cache` (git-ignored; override with `FASTEMBED_CACHE_PATH`). Without it, the first `/health` call waits for the download and returns 503 until the model is ready.
 - **Single uvicorn worker only.** Each worker would load its own copy of the model (~230 MB) and keep its own separate cache. One process peaks at about 311 MB, so two won't fit in 512 MB, and their caches wouldn't be shared anyway.
 - **The cache lives in memory and resets on every restart or redeploy.** There is no database. It holds at most `CACHE_MAX_ENTRIES` (default 2000) entries; when full, the oldest is dropped.
+- **Debugging:** with `CACHE_DEBUG=true`, `GET /v1/cache/entries` lists what is stored, plus the last 50 lookups (decision, similarity, match) and store attempts (stored / refreshed / skipped with the reason). It returns 404 otherwise, because it exposes users' queries, and it isn't listed in `/docs`.
 - **Hit rate:** set `ENABLE_QUERY_VARIATIONS=true` to store 8–10 paraphrases per answer. This raises the hit rate, but adds a parallel Gemini call on every miss. No code change is needed; it's read per request.
 
 ## Files
