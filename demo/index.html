@@ -881,6 +881,9 @@
           showLoading("Analyzing device photo with Gemini Vision...");
           const formData = new FormData();
           formData.append("file", selectedImageFile);
+          if (textQuery) {
+            formData.append("query", textQuery);
+          }
 
           response = await fetch(`${BACKEND_BASE}/v1/troubleshoot-image`, {
             method: "POST",
