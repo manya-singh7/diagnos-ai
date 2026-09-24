@@ -12,6 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source code and catalog datasets
 COPY . .
 
+# Pre-download the semantic cache embedding model (~87 MB) at build time so /health
+# is ready at start-up instead of waiting on the download; fails the build if it can't load
+RUN cd backend && python -m cache
+
 # Ensure backend directory is in PYTHONPATH so internal modules resolve cleanly
 ENV PYTHONPATH="/app/backend:/app"
 ENV PYTHONUNBUFFERED=1
