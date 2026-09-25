@@ -86,7 +86,7 @@ class BaseDeeplink(BaseModel):
         v = v.strip()
         if contains_url(v):
             raise ValueError(f"deeplink cannot contain web URLs: {v}")
-        if not (v.startswith("bixby://") or v.startswith("app://")):
+        if not v.startswith("bixby://"):
             raise ValueError(f"deeplink must be a valid Bixby URI (starting with bixby://): {v}")
         return v
 

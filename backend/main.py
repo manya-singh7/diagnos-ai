@@ -274,7 +274,7 @@ def _check_cache_ready() -> bool:
 
 
 def _check_model_ready() -> bool:
-    return gemini_client is not None
+    return bool(gemini_client_primary or gemini_client_backup or gemini_client)
 
 
 def _check_index_ready() -> bool:
