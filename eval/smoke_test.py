@@ -197,7 +197,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
         else:
             resp_json = r.json()
             contexts, fallback = extract_contexts_and_fallback(resp_json)
-            is_fallback = fallback == "no_match"
+            is_fallback = fallback in ("no_match", "no_match_offdomain_heuristic")
             empty_contexts = len(contexts) == 0
             success = is_fallback and empty_contexts
 

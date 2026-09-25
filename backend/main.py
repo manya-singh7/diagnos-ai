@@ -1295,6 +1295,23 @@ def troubleshoot(
         token_usage["prompt_tokens"] = ext_tokens.get("prompt_tokens", 0)
         token_usage["candidates_tokens"] = ext_tokens.get("candidates_tokens", 0)
 
+    # Deterministic off-domain backstop enforcement:
+    # If the complaint lacks device keywords (e.g. flight booking, chit-chat)
+    # and the model still returned goals, discard those goals and trigger
+    # the distinct fallback 'no_match_offdomain_heuristic'.
+    is_off_domain = not has_device_keywords(raw_query) and not has_device_keywords(query)
+    off_domain_discarded = False
+
+    if is_off_domain and goals:
+        logger.warning(
+            "Off-domain backstop enforced: Discarding %d hallucinated goal(s) for non-device query '%s'. "
+            "Triggering fallback 'no_match_offdomain_heuristic'.",
+            len(goals),
+            raw_query,
+        )
+        goals = []
+        off_domain_discarded = True
+
     # Optional Self-Critique Pass: Gated by ENABLE_SELF_CRITIQUE (default false)
     # Protected by strict SLA controls: 4000ms threshold guard and 2000ms hard timeout via concurrent.futures
     should_self_critique = os.getenv(
@@ -1361,11 +1378,12 @@ def troubleshoot(
         cost_usd=cost_usd,
     )
 
-    # Fallback if no valid goal could be constructed
+    # Fallback if no valid goal could be constructed or if discarded by off-domain backstop
     if not goals:
+        fallback_val = "no_match_offdomain_heuristic" if off_domain_discarded else "no_match"
         response_obj = serialize_response(
             contexts=[],
-            fallback="no_match",
+            fallback=fallback_val,
             meta=meta,
             query=raw_query,
             query_variations=variations,

@@ -325,7 +325,10 @@ class ContextDeeplinkResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_fallback_and_contexts(self) -> "ContextDeeplinkResponse":
-        if self.fallback in ("no_match", "vision_unavailable") and len(self.contexts) > 0:
+        if (
+            self.fallback in ("no_match", "no_match_offdomain_heuristic", "vision_unavailable")
+            or (self.fallback and self.fallback.startswith("no_match"))
+        ) and len(self.contexts) > 0:
             raise ValueError(f"When fallback is '{self.fallback}', contexts must be empty ([])")
         return self
 
@@ -384,7 +387,10 @@ class AppendixBInnerResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_fallback_and_contexts(self) -> "AppendixBInnerResponse":
-        if self.fallback in ("no_match", "vision_unavailable") and len(self.contexts) > 0:
+        if (
+            self.fallback in ("no_match", "no_match_offdomain_heuristic", "vision_unavailable")
+            or (self.fallback and self.fallback.startswith("no_match"))
+        ) and len(self.contexts) > 0:
             raise ValueError(f"When fallback is '{self.fallback}', contexts must be empty ([])")
         return self
 

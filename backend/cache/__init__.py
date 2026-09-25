@@ -180,7 +180,7 @@ def cache_store(query: str, response: Any, variations: List[str]) -> None:
         if not query or not query.strip():
             return
         dump, contexts, fallback, error = _response_parts(response)
-        if fallback == "no_match" or not contexts or error:
+        if (fallback and fallback.startswith("no_match")) or not contexts or error:
             with _store_lock:
                 _stats["stores_skipped"] += 1
             _log_store(query, f"skipped: {'fallback=' + fallback if fallback else 'error=' + error if error else 'empty contexts'}")
