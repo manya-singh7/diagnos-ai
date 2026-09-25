@@ -6,7 +6,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union, overload
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union, overload
 from urllib.parse import quote
 
 # Ensure backend directory is in sys.path so schema, retrieval, and cache resolve
@@ -510,6 +510,193 @@ def build_user_prompt(query: str, clean_siis: Optional[str] = None) -> str:
     return prompt
 
 
+# ---------------------------------------------------------------------------
+# "One Action = One Screen" Heuristic Validator
+# ---------------------------------------------------------------------------
+
+_CANONICAL_SETTINGS_MAP = {
+    "display": "display",
+    "brightness": "display",
+    "dark mode": "display",
+    "motion smoothness": "display",
+    "screen timeout": "display",
+    "eye comfort": "display",
+    "navigation bar": "display",
+    "battery": "battery",
+    "device care": "battery",
+    "power saving": "battery",
+    "battery protection": "battery",
+    "sound": "sound",
+    "sounds": "sound",
+    "volume": "sound",
+    "vibration": "sound",
+    "notifications": "notifications",
+    "notification": "notifications",
+    "connections": "connections",
+    "connection": "connections",
+    "wi-fi": "connections",
+    "wifi": "connections",
+    "bluetooth": "connections",
+    "flight mode": "connections",
+    "mobile networks": "connections",
+    "lock screen": "security_lock",
+    "security": "security_lock",
+    "privacy": "security_lock",
+    "biometrics": "security_lock",
+    "fingerprints": "security_lock",
+    "apps": "apps",
+    "applications": "apps",
+    "general management": "general",
+    "accessibility": "accessibility",
+    "software update": "software_update",
+}
+
+_NAV_VERBS = r"(?:tap|select|open|go\s+to|choose|navigate\s+to|click)\s+(?:on\s+)?"
+_SETTINGS_NAV_REGEX = re.compile(
+    rf"\b{_NAV_VERBS}(display|brightness|dark\s+mode|screen\s+timeout|navigation\s+bar|battery|device\s+care|power\s+saving|sound[s]?|volume|vibration|notifications?|connections?|wi-?fi|bluetooth|flight\s+mode|lock\s+screen|security|privacy|biometrics?|fingerprints?|apps?|general\s+management|accessibility|software\s+update)\b",
+    re.IGNORECASE,
+)
+_BREADCRUMB_NAV_REGEX = re.compile(
+    r"\bsettings\s*(?:>|->|→|\/)\s*([a-z\s-]+)",
+    re.IGNORECASE,
+)
+
+_STOP_WORDS_ACTION_NAME = {
+    "configure", "adjust", "check", "set", "enable", "disable", "turn", "on", "off",
+    "settings", "setting", "options", "option", "screen", "feature", "mode", "the", "a", "an", "to"
+}
+
+
+def _extract_navigation_categories(action: Action) -> Set[str]:
+    """Finds canonical top-level settings categories explicitly navigated to in the action's steps."""
+    categories: Set[str] = set()
+    for sg in action.stepGroups:
+        for step in sg.steps:
+            # 1. Match imperative navigation verbs (e.g. "Tap Display", "Go to Battery")
+            for match in _SETTINGS_NAV_REGEX.finditer(step):
+                target = re.sub(r"\s+", " ", match.group(1).lower().strip())
+                for key, canonical in _CANONICAL_SETTINGS_MAP.items():
+                    if key in target:
+                        categories.add(canonical)
+                        break
+
+            # 2. Match breadcrumbs (e.g. "Settings > Display", "Settings > Battery")
+            for match in _BREADCRUMB_NAV_REGEX.finditer(step):
+                crumb_text = match.group(1).lower()
+                for key, canonical in _CANONICAL_SETTINGS_MAP.items():
+                    if key in crumb_text:
+                        categories.add(canonical)
+                        break
+    return categories
+
+
+def _extract_subscreen_target(action: Action) -> Optional[str]:
+    """Extracts the specific sub-screen or deep navigation target from the first step group."""
+    if not action.stepGroups:
+        return None
+    for step in action.stepGroups[0].steps:
+        step_lower = step.lower()
+        bc_parts = re.split(r"\s*(?:>|->|→|\/)\s*", step_lower)
+        if len(bc_parts) >= 3 and "settings" in bc_parts[0]:
+            return f"{bc_parts[1].strip()} > {bc_parts[2].strip()}"
+        for specific in [
+            "navigation bar", "screen timeout", "motion smoothness", "adaptive brightness",
+            "dark mode", "power saving", "battery protection", "sound quality", "app notifications",
+        ]:
+            if specific in step_lower:
+                return specific
+    return None
+
+
+def _normalize_action_name_core(name: str) -> str:
+    tokens = re.findall(r"\b[a-z0-9]+\b", name.lower())
+    core_tokens = [t for t in tokens if t not in _STOP_WORDS_ACTION_NAME]
+    return " ".join(core_tokens) if core_tokens else " ".join(tokens)
+
+
+def validate_one_action_one_screen(goal: Goal) -> None:
+    """
+    Non-blocking heuristic validator for the spec's 'One Action = One Screen' rule:
+    1. Multi-screen bundling: single action references >1 distinct top-level settings categories.
+    2. Over-bundled steps: single action exceeds 7 imperative steps.
+    3. Unnecessary fragmentation: multiple actions in the same goal share near-identical
+       actionName or identical specific sub-screen navigation targets.
+    Logs warnings using the standard logger; does NOT raise exceptions.
+    """
+    # Checks 1 & 2: Single-action bundling & step count
+    for act in goal.actions:
+        # Check 1: Multi-screen bundling across distinct settings branches
+        nav_cats = _extract_navigation_categories(act)
+        if len(nav_cats) > 1:
+            logger.warning(
+                "[Rule: One Action = One Screen] Action '%s' likely bundles multiple screens into one action: "
+                "references multiple distinct top-level settings categories %s.",
+                act.actionName,
+                sorted(list(nav_cats)),
+            )
+
+        # Check 2: Step count threshold (> 7 steps)
+        total_steps = sum(len(sg.steps) for sg in act.stepGroups)
+        if total_steps > 7:
+            logger.warning(
+                "[Rule: One Action = One Screen] Action '%s' has %d steps (threshold > 7): "
+                "possible over-bundled action across multiple screens or excessive step granularity.",
+                act.actionName,
+                total_steps,
+            )
+
+    # Check 3: Unnecessary fragmentation across actions in the same goal
+    if len(goal.actions) > 1:
+        seen_cores: Dict[str, str] = {}
+        seen_subscreens: Dict[str, str] = {}
+        warned_pairs: Set[Tuple[str, str]] = set()
+
+        for act in goal.actions:
+            core_name = _normalize_action_name_core(act.actionName)
+            subscreen = _extract_subscreen_target(act)
+
+            # Check core name collision
+            for existing_core, orig_name in seen_cores.items():
+                pair_key = tuple(sorted([orig_name, act.actionName]))
+                if pair_key in warned_pairs:
+                    continue
+                set_a = set(core_name.split())
+                set_b = set(existing_core.split())
+                intersection = set_a & set_b
+                if core_name == existing_core or len(intersection) >= 2 or (
+                    len(set_a | set_b) > 0 and len(intersection) / len(set_a | set_b) >= 0.5
+                ):
+                    logger.warning(
+                        "[Rule: One Action = One Screen] Goal '%s' may unnecessarily fragment one screen: "
+                        "actions '%s' and '%s' share near-identical core concept %s.",
+                        goal.title,
+                        orig_name,
+                        act.actionName,
+                        sorted(list(intersection)),
+                    )
+                    warned_pairs.add(pair_key)
+                    break
+            seen_cores[core_name] = act.actionName
+
+            # Check subscreen navigation collision
+            if subscreen:
+                if subscreen in seen_subscreens:
+                    orig_act = seen_subscreens[subscreen]
+                    pair_key = tuple(sorted([orig_act, act.actionName]))
+                    if pair_key not in warned_pairs:
+                        logger.warning(
+                            "[Rule: One Action = One Screen] Goal '%s' may unnecessarily fragment one screen: "
+                            "actions '%s' and '%s' navigate to the exact same specific screen ('%s').",
+                            goal.title,
+                            orig_act,
+                            act.actionName,
+                            subscreen,
+                        )
+                        warned_pairs.add(pair_key)
+                else:
+                    seen_subscreens[subscreen] = act.actionName
+
+
 def _normalize_and_validate_goal(data: Dict[str, Any]) -> Goal:
     """
     Applies programmatic auto-corrections (title sentence case, URL scrubbing,
@@ -554,7 +741,9 @@ def _normalize_and_validate_goal(data: Dict[str, Any]) -> Goal:
             )
         )
 
-    return Goal(**data)
+    goal_obj = Goal(**data)
+    validate_one_action_one_screen(goal_obj)
+    return goal_obj
 
 
 COMBINED_CRITIQUE_PROMPT = """You are a rigorous QA critic for Samsung Galaxy device troubleshooting.
