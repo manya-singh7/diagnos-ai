@@ -72,19 +72,129 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# Gemini Client & Model Configuration
+# Gemini Client & Model Configuration (Multi-Key Automatic Failover)
 # ---------------------------------------------------------------------------
 
 MODEL_NAME = "gemini-3.6-flash"
 
+PRIMARY_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", "").strip() or None
+BACKUP_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY_BACKUP", "").strip() or None
+
+gemini_client_primary = None
+gemini_client_backup = None
+
 try:
     from google import genai
-    from google.genai import types
+    from google.genai import errors, types
 
-    # Initialize client from environment without logging key
-    gemini_client = genai.Client()
-except Exception:
-    gemini_client = None
+    # Primary client: explicit key if set, otherwise default environment
+    if PRIMARY_API_KEY:
+        gemini_client_primary = genai.Client(api_key=PRIMARY_API_KEY)
+    else:
+        try:
+            gemini_client_primary = genai.Client()
+        except Exception:
+            gemini_client_primary = None
+
+    # Backup client: initialized only if GEMINI_API_KEY_BACKUP is explicitly set
+    if BACKUP_API_KEY:
+        try:
+            gemini_client_backup = genai.Client(api_key=BACKUP_API_KEY)
+            logger.info("Gemini backup client initialized successfully from GEMINI_API_KEY_BACKUP.")
+        except Exception as e:
+            logger.warning("Failed to initialize Gemini backup client from GEMINI_API_KEY_BACKUP: %s", e)
+            gemini_client_backup = None
+    else:
+        gemini_client_backup = None
+
+except Exception as e:
+    logger.warning("Google GenAI SDK unavailable or initialization failed: %s", e)
+    gemini_client_primary = None
+    gemini_client_backup = None
+
+# Backward compatibility alias for single-client references, health probes, and test mocks
+gemini_client = gemini_client_primary
+
+
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """
+    Returns True ONLY if the exception represents an HTTP 429 / RESOURCE_EXHAUSTED quota error.
+    Explicitly ignores 503 UNAVAILABLE, timeouts, connection errors, and schema/validation errors.
+    """
+    # 1. Direct inspection of google.genai.errors.APIError / ClientError fields
+    code = getattr(exc, "code", None)
+    status = getattr(exc, "status", None)
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        return True
+
+    # 2. String representation inspection for Google GenAI / gRPC / HTTP 429 error messages
+    msg = str(exc)
+    if "RESOURCE_EXHAUSTED" in msg:
+        return True
+    if "429" in msg and any(kw in msg.lower() for kw in ("quota", "exhausted", "rate limit", "too many requests")):
+        return True
+
+    return False
+
+
+def generate_content_with_failover(
+    client: Optional[Any],
+    model: str,
+    contents: Any,
+    config: Optional[Any] = None,
+    call_name: str = "gemini_call",
+) -> Any:
+    """
+    Executes client.models.generate_content(...) with automatic single-retry failover
+    to gemini_client_backup ONLY if the call fails specifically with 429 RESOURCE_EXHAUSTED.
+
+    Other errors (503 UNAVAILABLE, network timeouts, validation failures) are NOT caught here
+    and bubble up immediately to the caller's existing retry/backoff handlers.
+
+    Logs clearly which key (primary or backup) actually served each successful request.
+    """
+    primary = client if client is not None else (gemini_client_primary or gemini_client)
+    if primary is None:
+        raise RuntimeError(f"[{call_name}] Gemini primary client is uninitialized.")
+
+    try:
+        response = primary.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+        logger.info("[%s] Request served successfully by PRIMARY Gemini API key.", call_name)
+        return response
+    except Exception as primary_exc:
+        # Check specifically for quota exhausted (429 RESOURCE_EXHAUSTED)
+        if _is_quota_exhausted(primary_exc) and gemini_client_backup is not None:
+            logger.warning(
+                "[%s] Primary Gemini API key exhausted (429 RESOURCE_EXHAUSTED: %s). "
+                "Failing over immediately to BACKUP Gemini API key...",
+                call_name,
+                primary_exc,
+            )
+            try:
+                response = gemini_client_backup.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+                logger.info(
+                    "[%s] Request served successfully by BACKUP Gemini API key (failover succeeded).",
+                    call_name,
+                )
+                return response
+            except Exception as backup_exc:
+                logger.error(
+                    "[%s] Backup Gemini API key also failed after failover: %s",
+                    call_name,
+                    backup_exc,
+                )
+                raise backup_exc
+
+        # If not 429, or backup client is not configured, re-raise immediately
+        raise primary_exc
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +504,8 @@ def critique_goals_combined(
     prompt = COMBINED_CRITIQUE_PROMPT.format(query=query, candidates_text=candidates_text)
 
     try:
-        response = active_client.models.generate_content(
+        response = generate_content_with_failover(
+            client=active_client,
             model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -404,6 +515,7 @@ def critique_goals_combined(
                 max_output_tokens=300,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
+            call_name="critique_goals_combined",
         )
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             token_usage["prompt_tokens"] = response.usage_metadata.prompt_token_count or 0
@@ -485,7 +597,8 @@ def extract_goals(
             full_prompt = (
                 f"{SYSTEM_PROMPT}\n\n" + "\n\n".join(messages)
             )
-            response = active_client.models.generate_content(
+            response = generate_content_with_failover(
+                client=active_client,
                 model=model_name,
                 contents=full_prompt,
                 config=types.GenerateContentConfig(
@@ -495,6 +608,7 @@ def extract_goals(
                     max_output_tokens=1500,
                     thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
+                call_name=f"extract_goals_attempt_{attempt + 1}",
             )
 
             # Accumulate token metrics if available
@@ -977,7 +1091,8 @@ def generate_query_variations(
 
     prompt = f'{QUERY_VARIATIONS_PROMPT}\n\nCustomer Troubleshooting Query:\n"{query}"'
     try:
-        response = active_client.models.generate_content(
+        response = generate_content_with_failover(
+            client=active_client,
             model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -987,6 +1102,7 @@ def generate_query_variations(
                 max_output_tokens=600,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
+            call_name="generate_query_variations",
         )
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             token_usage["prompt_tokens"] = response.usage_metadata.prompt_token_count or 0
@@ -1392,7 +1508,8 @@ async def troubleshoot_image(
             "'Battery percentage stuck or device not charging', 'Touch screen unresponsive or shattered glass'). "
             "Output ONLY the concise problem description without any URLs, greetings, or preamble."
         )
-        caption_response = active_client.models.generate_content(
+        caption_response = generate_content_with_failover(
+            client=active_client,
             model=MODEL_NAME,
             contents=[image_part, vision_prompt],
             config=types.GenerateContentConfig(
@@ -1401,6 +1518,7 @@ async def troubleshoot_image(
                 max_output_tokens=150,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
+            call_name="troubleshoot_image_vision",
         )
         raw_caption = (caption_response.text or "").strip()
         detected_query = scrub_urls(raw_caption).strip()

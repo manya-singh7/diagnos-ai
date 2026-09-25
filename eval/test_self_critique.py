@@ -74,7 +74,7 @@ bmain.gemini_client = mock_client
 bmain.extract_goals = MagicMock(return_value=([goal1.model_copy(deep=True)], {"prompt_tokens": 100, "candidates_tokens": 50}))
 bmain.critique_goals_combined = MagicMock(wraps=bmain.critique_goals_combined)
 
-resp = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
+resp = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"), skip_cache_lookup=True)
 assert bmain.critique_goals_combined.call_count == 0
 assert resp.contexts[0].self_critique is None
 print("[PASS] ENABLE_SELF_CRITIQUE=false: Zero critique calls made, self_critique is None")
@@ -84,7 +84,7 @@ os.environ["ENABLE_SELF_CRITIQUE"] = "true"
 bmain.critique_goals_combined.reset_mock()
 bmain.critique_goals_combined.return_value = ([(True, 0.9, "Plan directly targets battery drain.")], {"prompt_tokens": 50, "candidates_tokens": 20})
 
-resp = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
+resp = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"), skip_cache_lookup=True)
 assert bmain.critique_goals_combined.call_count == 1
 assert resp.contexts[0].self_critique == "Plan directly targets battery drain."
 print("[PASS] ENABLE_SELF_CRITIQUE=true (<= 4000ms): Critique executed and self_critique surfaced on Goal")
@@ -123,7 +123,7 @@ bmain.critique_goals_combined = hanging_critique
 bmain.extract_goals = MagicMock(return_value=([goal1.model_copy(deep=True)], {"prompt_tokens": 100, "candidates_tokens": 50}))
 
 t0 = time.perf_counter()
-resp_timeout = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"))
+resp_timeout = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"), skip_cache_lookup=True)
 total_duration = time.perf_counter() - t0
 
 # Verify it timed out in ~2.0s rather than waiting 2.5s+
