@@ -1,1224 +1,505 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Diagnos AI — Smart Guided Troubleshooting Engine</title>
-  <style>
-    :root {
-      --bg: #0f172a;
-      --card-bg: #1e293b;
-      --card-border: #334155;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --primary: #3b82f6;
-      --primary-hover: #2563eb;
-      --auto-bg: rgba(16, 185, 129, 0.15);
-      --auto-border: #10b981;
-      --auto-text: #34d399;
-      --manual-bg: rgba(245, 158, 11, 0.15);
-      --manual-border: #f59e0b;
-      --manual-text: #fbbf24;
-      --critical-bg: rgba(239, 68, 68, 0.15);
-      --critical-border: #ef4444;
-      --critical-text: #f87171;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diagnos AI — Smart Guided Troubleshooting Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#14120E; --bg2:#0F0D0A;
+  --card:#1C1813; --card2:#221D16;
+  --line:#332C20; --line-soft:#2A251B;
+  --text:#F3EEE2; --muted:#9C9282; --muted-dim:#6E6656;
+  --accent:#FF7A33; --accent-dim:#C75F26; --accent-soft:rgba(255,122,51,.12);
+  --auto:#7FD99A; --manual:#E8B34D; --critical:#FF6857;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:'Manrope',-apple-system,BlinkMacSystemFont,sans-serif;
+  background:
+    radial-gradient(900px 420px at 15% -8%, rgba(255,122,51,.08), transparent 60%),
+    var(--bg);
+  color:var(--text);min-height:100vh;display:flex;justify-content:center;
+  padding:40px 18px 60px;
+}
+.mono{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+.container{width:100%;max-width:680px;display:flex;flex-direction:column;gap:20px}
+
+/* ---- Header ---- */
+header{padding-bottom:6px;border-bottom:1px solid var(--line-soft)}
+.badge-top{
+  display:flex;align-items:center;gap:8px;
+  font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--muted);
+  margin-bottom:14px;
+}
+.badge-top::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft);flex:none}
+h1{font-size:32px;font-weight:800;letter-spacing:-.02em;color:var(--text);margin-bottom:8px}
+.subtitle{font-size:14.5px;color:var(--muted);line-height:1.5;max-width:46ch;padding-bottom:18px}
+
+/* ---- Cards ---- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px}
+
+/* ---- Samples ---- */
+.samples-bar{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-bottom:16px}
+.samples-label{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted-dim);
+  margin-right:2px;text-transform:lowercase}
+.sample-pill,.chip{
+  background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:6px;
+  padding:6px 11px;font-size:12.5px;font-weight:500;cursor:pointer;transition:.15s;
+  font-family:'Manrope',sans-serif;
+}
+.sample-pill:hover,.chip:hover{color:var(--text);border-color:var(--accent-dim);background:var(--accent-soft)}
+
+/* ---- Input area ---- */
+.input-group{display:flex;flex-direction:column;gap:12px}
+textarea,.text-input{
+  width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;
+  padding:13px 14px;color:var(--text);font-size:14.5px;outline:none;transition:.15s;
+  font-family:'Manrope',sans-serif;
+}
+textarea{resize:vertical;min-height:84px;line-height:1.5}
+textarea::placeholder,.text-input::placeholder{color:var(--muted-dim)}
+textarea:focus,.text-input:focus{border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-soft)}
+
+.controls-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+button{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;border:none;
+  border-radius:7px;padding:11px 16px;font-size:14px;font-weight:700;cursor:pointer;
+  transition:.15s;font-family:'Manrope',sans-serif;
+}
+.btn-primary{background:var(--accent);color:#1A0F06;flex:1;min-width:150px}
+.btn-primary:hover:not(:disabled){background:#ff8c4d}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--line)}
+.btn-secondary:hover:not(:disabled){border-color:var(--accent-dim);background:var(--accent-soft)}
+.btn-mic.recording{background:rgba(255,104,87,.14);border-color:var(--critical);color:var(--critical);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+.combo-hint{font-size:12px;color:var(--muted-dim)}
+.image-preview-container{
+  display:none;align-items:center;gap:12px;padding:10px;background:var(--card2);
+  border:1px dashed var(--line);border-radius:8px;
+}
+.image-preview-container img{width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+.image-details{flex:1;font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'JetBrains Mono',monospace}
+.btn-remove-img{background:transparent;color:var(--critical);padding:4px 8px;font-size:12px;font-weight:600}
+.status-msg{font-size:13px;color:var(--muted);min-height:18px}
+
+/* ---- Loading ---- */
+.loading-box{display:none;flex-direction:column;align-items:center;gap:14px;padding:36px 16px;text-align:center}
+.spinner{width:26px;height:26px;border:2.5px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14.5px;font-weight:600;color:var(--text)}
+.loading-timer{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted-dim)}
+
+/* ---- Telemetry readout strip ---- */
+.telemetry-bar{
+  display:none;align-items:center;justify-content:flex-start;flex-wrap:wrap;
+  background:var(--card2);border:1px solid var(--line);border-radius:8px;
+  padding:10px 16px;font-size:12px;color:var(--muted);gap:20px;
+}
+.telemetry-item{display:flex;align-items:baseline;gap:6px;font-family:'JetBrains Mono',monospace}
+.telemetry-item span:first-child{font-family:'Manrope',sans-serif;color:var(--muted-dim);font-size:11.5px}
+.telemetry-val{color:var(--text);font-weight:700}
+.cache-badge{padding:2px 7px;border-radius:4px;font-size:10.5px;font-weight:700;letter-spacing:.03em}
+.cache-hit{background:rgba(127,217,154,.15);color:var(--auto)}
+.cache-miss{background:rgba(156,146,130,.12);color:var(--muted)}
+.cache-note{font-size:11.5px;font-weight:600;font-family:'Manrope',sans-serif}
+.cache-note-hit{color:var(--auto)}
+.cache-note-veto{color:var(--critical)}
+
+.results-container{display:flex;flex-direction:column;gap:16px}
+
+/* ---- Clarify card ---- */
+.clarify-card{
+  background:var(--card);border:1px solid var(--accent-dim);border-radius:10px;padding:20px;
+  display:flex;flex-direction:column;gap:13px;animation:fade .3s ease;position:relative;
+}
+.clarify-card::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;background:var(--accent);border-radius:2px}
+.clarify-tag{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.03em;color:var(--accent)}
+.clarify-q{font-size:16.5px;font-weight:700;line-height:1.4}
+.chip-row{display:flex;flex-wrap:wrap;gap:8px}
+.chip-lg{padding:9px 14px;font-size:13px;border-radius:7px}
+.clarify-free{display:flex;gap:8px}
+.clarify-free .text-input{flex:1;padding:9px 12px}
+.btn-link{background:none;color:var(--muted-dim);font-size:12px;padding:2px;align-self:flex-start;font-weight:600}
+.btn-link:hover{color:var(--text);text-decoration:underline}
+.refined-banner{
+  background:rgba(127,217,154,.08);border:1px solid rgba(127,217,154,.3);color:var(--auto);
+  border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600;
+}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---- Goal cards ---- */
+.goal-card{
+  background:var(--card);border:1px solid var(--line);border-radius:10px;padding:22px;
+  display:flex;flex-direction:column;gap:15px;animation:fade .3s ease;position:relative;
+}
+.goal-header{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;border-bottom:1px solid var(--line-soft);padding-bottom:15px}
+.goal-title{font-size:17px;font-weight:800;margin-bottom:5px;letter-spacing:-.01em}
+.goal-instruction{font-size:13px;color:var(--muted);line-height:1.5}
+.conf{min-width:90px;text-align:right;flex:none}
+.conf-num{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--accent);line-height:1}
+.conf-label{font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:var(--muted-dim);text-transform:uppercase;margin-top:3px}
+.conf-bar{height:3px;background:var(--card2);border-radius:2px;margin-top:8px;overflow:hidden}
+.conf-fill{height:100%;background:var(--accent);border-radius:2px}
+
+.diagnosis-trace{background:var(--card2);border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:12px}
+.trace-summary{display:flex;justify-content:space-between;padding:10px 13px;color:var(--muted);cursor:pointer;user-select:none;font-weight:600;list-style:none}
+.trace-summary:hover{color:var(--text)}
+.trace-summary::-webkit-details-marker{display:none}
+.trace-summary-hint{font-size:11px;color:var(--muted-dim);font-weight:400;font-family:'JetBrains Mono',monospace}
+.trace-list{list-style:none;padding:11px 14px;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line)}
+.trace-item{display:flex;gap:8px;color:var(--muted);line-height:1.5;font-size:12.5px}
+.trace-item::before{content:"—";color:var(--accent-dim);font-weight:700;flex:none}
+
+.actions-list{display:flex;flex-direction:column;gap:11px}
+.action-item{
+  background:var(--card2);border:1px solid var(--line);border-left:2px solid var(--manual);
+  border-radius:8px;padding:15px 17px;display:flex;flex-direction:column;gap:10px;
+}
+.action-item.cat-auto{border-left-color:var(--auto)}
+.action-item.cat-manual{border-left-color:var(--manual)}
+.action-item.cat-critical{border-left-color:var(--critical)}
+.action-header{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.category-badge{
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:3px 7px;
+  border-radius:4px;letter-spacing:.03em;border:1px solid;
+}
+.category-auto{background:rgba(127,217,154,.08);border-color:rgba(127,217,154,.35);color:var(--auto)}
+.category-manual{background:rgba(232,179,77,.08);border-color:rgba(232,179,77,.35);color:var(--manual)}
+.category-critical{background:rgba(255,104,87,.08);border-color:rgba(255,104,87,.35);color:var(--critical)}
+.action-name{font-size:14.5px;font-weight:700;flex:1;letter-spacing:-.005em}
+.action-desc{font-size:12.5px;color:var(--muted);font-style:normal}
+.steps-list{list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--muted)}
+.steps-list li{counter-increment:s;display:flex;gap:11px;line-height:1.5}
+.steps-list li::before{
+  content:counter(s,decimal-leading-zero);font-family:'JetBrains Mono',monospace;flex:none;
+  width:auto;color:var(--muted-dim);font-size:11px;font-weight:700;margin-top:2px;
+}
+.deeplink-btn{
+  align-self:flex-start;background:transparent;color:var(--accent);border:1px solid var(--accent-dim);
+  border-radius:6px;padding:8px 12px;font-size:12.5px;font-weight:700;
+}
+.deeplink-btn:hover{background:var(--accent-soft)}
+.deeplink-uri{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted-dim);opacity:.9;font-weight:400}
+.toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);
+  background:var(--card);color:var(--text);border:1px solid var(--line);padding:10px 18px;
+  border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4);transition:transform .25s;
+  z-index:100;pointer-events:none;font-family:'JetBrains Mono',monospace;
+}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.no-match-box{text-align:center;padding:34px 16px;color:var(--muted)}
+.no-match-icon{font-size:26px;margin-bottom:10px;opacity:.7}
+.no-match-title{font-size:15.5px;font-weight:700;color:var(--text);margin-bottom:5px}
+.no-match-desc{font-size:13px;line-height:1.6}
+</style>
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      padding: 24px 16px;
-    }
-
-    .container {
-      width: 100%;
-      max-width: 680px;
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-
-    header {
-      text-align: center;
-      padding-bottom: 8px;
-    }
-
-    .badge-top {
-      display: inline-block;
-      background: rgba(59, 130, 246, 0.15);
-      color: #60a5fa;
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      padding: 4px 12px;
-      border-radius: 9999px;
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 8px;
-    }
-
-    h1 {
-      font-size: 26px;
-      font-weight: 700;
-      color: #ffffff;
-      margin-bottom: 6px;
-    }
-
-    p.subtitle {
-      font-size: 14px;
-      color: var(--text-muted);
-    }
-
-    /* Card styling */
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 14px;
-      padding: 20px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-    }
-
-    /* Samples Bar */
-    .samples-bar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .samples-label {
-      font-size: 12px;
-      color: var(--text-muted);
-      font-weight: 600;
-    }
-
-    .sample-pill {
-      background: #334155;
-      color: #cbd5e1;
-      border: 1px solid #475569;
-      border-radius: 9999px;
-      padding: 4px 10px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .sample-pill:hover {
-      background: #475569;
-      color: #ffffff;
-      border-color: #64748b;
-    }
-
-    /* Input area */
-    .input-group {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    textarea {
-      width: 100%;
-      background: #0f172a;
-      border: 1px solid var(--card-border);
-      border-radius: 10px;
-      padding: 12px;
-      color: #ffffff;
-      font-size: 14px;
-      resize: vertical;
-      min-height: 80px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    textarea:focus {
-      border-color: var(--primary);
-    }
-
-    /* Button Controls Row */
-    .controls-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .btn-primary {
-      background: var(--primary);
-      color: #ffffff;
-      flex: 1;
-      min-width: 140px;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: var(--primary-hover);
-    }
-
-    .btn-secondary {
-      background: #334155;
-      color: #e2e8f0;
-      border: 1px solid #475569;
-    }
-
-    .btn-secondary:hover:not(:disabled) {
-      background: #475569;
-      color: #ffffff;
-    }
-
-    .btn-mic.recording {
-      background: rgba(239, 68, 68, 0.2);
-      border-color: #ef4444;
-      color: #f87171;
-      animation: pulse-red 1.5s infinite;
-    }
-
-    @keyframes pulse-red {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.6; }
-    }
-
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* Image Preview */
-    .image-preview-container {
-      display: none;
-      align-items: center;
-      gap: 12px;
-      padding: 10px;
-      background: #0f172a;
-      border: 1px dashed var(--card-border);
-      border-radius: 8px;
-      margin-top: 8px;
-    }
-
-    .image-preview-container img {
-      width: 56px;
-      height: 56px;
-      object-fit: cover;
-      border-radius: 6px;
-      border: 1px solid #334155;
-    }
-
-    .image-details {
-      flex: 1;
-      font-size: 13px;
-      color: var(--text-muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .btn-remove-img {
-      background: transparent;
-      color: #ef4444;
-      padding: 4px 8px;
-      font-size: 12px;
-    }
-
-    .btn-remove-img:hover {
-      text-decoration: underline;
-    }
-
-    /* Status & Loading */
-    .status-msg {
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-top: 4px;
-      min-height: 18px;
-    }
-
-    .loading-box {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      padding: 32px 16px;
-      text-align: center;
-    }
-
-    .spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid #334155;
-      border-top-color: var(--primary);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    .loading-text {
-      font-size: 15px;
-      font-weight: 500;
-      color: #cbd5e1;
-    }
-
-    .loading-timer {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-
-    /* Meta Telemetry Bar */
-    .telemetry-bar {
-      display: none;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      background: #0f172a;
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 16px;
-      gap: 8px;
-    }
-
-    .telemetry-item {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-
-    .telemetry-val {
-      color: #f1f5f9;
-      font-weight: 600;
-    }
-
-    .cache-badge {
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 700;
-    }
-
-    .cache-hit {
-      background: rgba(16, 185, 129, 0.2);
-      color: #34d399;
-    }
-
-    .cache-miss {
-      background: rgba(148, 163, 184, 0.15);
-      color: #94a3b8;
-    }
-
-    .cache-note {
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    .cache-note-hit {
-      color: #34d399;
-    }
-
-    .cache-note-veto {
-      color: #f87171;
-    }
-
-    /* Results section */
-    .results-container {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    .goal-card {
-      background: #1e293b;
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .goal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      border-bottom: 1px solid #334155;
-      padding-bottom: 12px;
-    }
-
-    .goal-title {
-      font-size: 18px;
-      font-weight: 700;
-      color: #ffffff;
-    }
-
-    .score-badge {
-      background: rgba(59, 130, 246, 0.15);
-      color: #60a5fa;
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    .goal-instruction {
-      font-size: 14px;
-      color: #cbd5e1;
-      line-height: 1.4;
-    }
-
-    /* Reasoning Trace Collapsible Section */
-    .diagnosis-trace {
-      margin-top: 10px;
-      background: #0b1120;
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      overflow: hidden;
-      font-size: 12px;
-    }
-
-    .trace-summary {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      background: rgba(30, 41, 59, 0.6);
-      color: #94a3b8;
-      cursor: pointer;
-      user-select: none;
-      font-weight: 600;
-      transition: background 0.15s ease, color 0.15s ease;
-    }
-
-    .trace-summary:hover {
-      background: rgba(51, 65, 85, 0.6);
-      color: #f1f5f9;
-    }
-
-    .trace-summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .trace-summary-hint {
-      font-size: 11px;
-      color: #64748b;
-      font-weight: normal;
-    }
-
-    .trace-list {
-      list-style: none;
-      padding: 10px 14px;
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      border-top: 1px solid var(--card-border);
-      background: #0f172a;
-    }
-
-    .trace-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      color: #cbd5e1;
-      line-height: 1.4;
-    }
-
-    .trace-item::before {
-      content: "•";
-      color: #38bdf8;
-      font-weight: bold;
-    }
-
-    /* Actions List */
-    .actions-list {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .action-item {
-      background: #0f172a;
-      border: 1px solid var(--card-border);
-      border-radius: 10px;
-      padding: 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .action-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .category-badge {
-      font-size: 11px;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .category-auto {
-      background: var(--auto-bg);
-      border: 1px solid var(--auto-border);
-      color: var(--auto-text);
-    }
-
-    .category-manual {
-      background: var(--manual-bg);
-      border: 1px solid var(--manual-border);
-      color: var(--manual-text);
-    }
-
-    .category-critical {
-      background: var(--critical-bg);
-      border: 1px solid var(--critical-border);
-      color: var(--critical-text);
-    }
-
-    .action-name {
-      font-size: 15px;
-      font-weight: 600;
-      color: #ffffff;
-      flex: 1;
-    }
-
-    .action-desc {
-      font-size: 13px;
-      color: var(--text-muted);
-      font-style: italic;
-    }
-
-    .steps-list {
-      margin-left: 20px;
-      font-size: 13px;
-      color: #cbd5e1;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .steps-list li {
-      line-height: 1.4;
-    }
-
-    /* Deeplink Button */
-    .deeplink-btn {
-      align-self: flex-start;
-      margin-top: 4px;
-      background: #1e3a8a;
-      color: #bfdbfe;
-      border: 1px solid #3b82f6;
-      border-radius: 6px;
-      padding: 8px 12px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: background 0.15s ease;
-    }
-
-    .deeplink-btn:hover {
-      background: #1d4ed8;
-      color: #ffffff;
-    }
-
-    .deeplink-btn:active {
-      transform: scale(0.98);
-    }
-
-    .deeplink-uri {
-      font-size: 11px;
-      color: #93c5fd;
-      opacity: 0.8;
-      font-family: monospace;
-    }
-
-    /* Toast notification */
-    .toast {
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%) translateY(100px);
-      background: #334155;
-      color: #ffffff;
-      border: 1px solid #475569;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-size: 13px;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
-      transition: transform 0.25s ease;
-      z-index: 100;
-      pointer-events: none;
-    }
-
-    .toast.show {
-      transform: translateX(-50%) translateY(0);
-    }
-
-    /* Fallback / No Match Notice */
-    .no-match-box {
-      text-align: center;
-      padding: 28px 16px;
-      color: var(--text-muted);
-    }
-
-    .no-match-icon {
-      font-size: 32px;
-      margin-bottom: 8px;
-    }
-
-    .no-match-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: #e2e8f0;
-      margin-bottom: 4px;
-    }
-
-    .no-match-desc {
-      font-size: 13px;
-    }
-  </style>
 </head>
 <body>
+<div class="container">
+  <header>
+    <div class="badge-top">samsung galaxy · prism diagnostics demo</div>
+    <h1>Diagnos AI</h1>
+    <p class="subtitle">Describe a device fault by text, voice, or photo. The engine matches it against a live troubleshooting catalog and returns a ranked, actionable repair plan.</p>
+  </header>
 
-  <div class="container">
-    <header>
-      <div class="badge-top">Samsung Galaxy PRISM Demo</div>
-      <h1>Diagnos AI</h1>
-      <p class="subtitle">Smart Guided Troubleshooting Engine — Text, Voice & Vision Input</p>
-    </header>
-
-    <!-- Query Input Card -->
-    <div class="card">
-      <!-- Quick sample queries -->
-      <div class="samples-bar">
-        <span class="samples-label">Quick Samples:</span>
-        <button type="button" class="sample-pill" data-query="The mobile phone swipe navigation moves up or down instead of left or right after downloading an app">Swipe Inverted</button>
-        <button type="button" class="sample-pill" data-query="Battery draining extremely fast since the latest software update">Battery Fast Drain</button>
-        <button type="button" class="sample-pill" data-query="Camera app crashes every time I try to switch to ultra wide lens">Camera Crash</button>
-        <button type="button" class="sample-pill" data-query="Phone becomes very hot and lags when switching between apps">Lag & Overheat</button>
-      </div>
-
-      <div class="input-group">
-        <textarea id="queryInput" placeholder="Describe the device issue (e.g., 'Screen flickers when brightness is lowered', 'Phone won't charge')..."></textarea>
-
-        <!-- Hidden file input for photo upload -->
-        <input type="file" id="imageInput" accept="image/*" style="display: none;">
-
-        <!-- Image preview container -->
-        <div id="imagePreviewContainer" class="image-preview-container">
-          <img id="imagePreview" alt="Problem preview">
-          <div class="image-details" id="imageDetails">photo.jpg</div>
-          <button type="button" class="btn-remove-img" id="btnRemoveImg">✕ Remove</button>
-        </div>
-
-        <div class="controls-row">
-          <button type="button" class="btn-secondary" id="btnUploadPhoto" title="Attach device photo">
-            📷 Photo
-          </button>
-          <button type="button" class="btn-secondary btn-mic" id="btnMic" title="Voice dictation">
-            🎤 Speak
-          </button>
-          <button type="button" class="btn-primary" id="btnSubmit">
-            Diagnose Issue
-          </button>
-        </div>
-
-        <div class="status-msg" id="statusMsg"></div>
-      </div>
+  <div class="card">
+    <div class="samples-bar">
+      <span class="samples-label">try:</span>
+      <button type="button" class="sample-pill" data-query="The mobile phone swipe navigation moves up or down instead of left or right after downloading an app">Swipe Inverted</button>
+      <button type="button" class="sample-pill" data-query="Battery draining extremely fast since the latest software update">Battery Fast Drain</button>
+      <button type="button" class="sample-pill" data-query="Camera app crashes every time I try to switch to ultra wide lens">Camera Crash</button>
+      <button type="button" class="sample-pill" data-query="Phone becomes very hot and lags when switching between apps">Lag &amp; Overheat</button>
+      <button type="button" class="sample-pill" data-query="The phone screen gestures are not responding properly">Ambiguous Gestures</button>
     </div>
-
-    <!-- Loading Box -->
-    <div class="card loading-box" id="loadingBox">
-      <div class="spinner"></div>
-      <div class="loading-text" id="loadingText">Diagnosing issue with Gemini AI...</div>
-      <div class="loading-timer" id="loadingTimer">Elapsed: 0.0s</div>
+    <div class="input-group">
+      <textarea id="queryInput" placeholder="Describe the issue (e.g. 'Screen flickers when brightness is lowered'). You can also attach a photo and send both together."></textarea>
+      <input type="file" id="imageInput" accept="image/*" style="display:none">
+      <div id="imagePreviewContainer" class="image-preview-container">
+        <img id="imagePreview" alt="Problem preview">
+        <div class="image-details" id="imageDetails">photo.jpg</div>
+        <button type="button" class="btn-remove-img" id="btnRemoveImg">✕ Remove</button>
+      </div>
+      <div class="controls-row">
+        <button type="button" class="btn-secondary" id="btnUploadPhoto">📷 Photo</button>
+        <button type="button" class="btn-secondary btn-mic" id="btnMic">🎤 Speak</button>
+        <button type="button" class="btn-primary" id="btnSubmit">Diagnose Issue</button>
+      </div>
+      <div class="combo-hint" id="comboHint"></div>
+      <div class="status-msg" id="statusMsg"></div>
     </div>
-
-    <!-- Telemetry Bar -->
-    <div class="telemetry-bar" id="telemetryBar">
-      <div class="telemetry-item">
-        <span>⚡ Latency:</span>
-        <span class="telemetry-val" id="metaLatency">-</span>
-      </div>
-      <div class="telemetry-item">
-        <span>💾 Cache:</span>
-        <span class="cache-badge" id="metaCache">-</span>
-        <span class="cache-note" id="metaCacheNote"></span>
-      </div>
-      <div class="telemetry-item">
-        <span>🤖 Model:</span>
-        <span class="telemetry-val" id="metaModel">-</span>
-      </div>
-      <div class="telemetry-item">
-        <span>💲 Cost:</span>
-        <span class="telemetry-val" id="metaCost">-</span>
-      </div>
-    </div>
-
-    <!-- Results Container -->
-    <div class="results-container" id="resultsContainer"></div>
   </div>
 
-  <!-- Toast element for simulated deeplink clicks -->
-  <div class="toast" id="toast"></div>
+  <div class="card loading-box" id="loadingBox">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Diagnosing issue with Gemini AI...</div>
+    <div class="loading-timer" id="loadingTimer">Elapsed: 0.0s</div>
+  </div>
 
-  <script>
-    const BACKEND_BASE = "http://localhost:8000";
+  <div class="telemetry-bar" id="telemetryBar">
+    <div class="telemetry-item"><span>⚡ Latency:</span><span class="telemetry-val" id="metaLatency">-</span></div>
+    <div class="telemetry-item"><span>💾 Cache:</span><span class="cache-badge" id="metaCache">-</span><span class="cache-note" id="metaCacheNote"></span></div>
+    <div class="telemetry-item"><span>🤖 Model:</span><span class="telemetry-val" id="metaModel">-</span></div>
+    <div class="telemetry-item"><span>💲 Cost:</span><span class="telemetry-val" id="metaCost">-</span></div>
+  </div>
 
-    const queryInput = document.getElementById("queryInput");
-    const imageInput = document.getElementById("imageInput");
-    const imagePreviewContainer = document.getElementById("imagePreviewContainer");
-    const imagePreview = document.getElementById("imagePreview");
-    const imageDetails = document.getElementById("imageDetails");
-    const btnRemoveImg = document.getElementById("btnRemoveImg");
-    const btnUploadPhoto = document.getElementById("btnUploadPhoto");
-    const btnMic = document.getElementById("btnMic");
-    const btnSubmit = document.getElementById("btnSubmit");
-    const statusMsg = document.getElementById("statusMsg");
+  <div class="results-container" id="resultsContainer"></div>
+</div>
+<div class="toast" id="toast"></div>
 
-    const loadingBox = document.getElementById("loadingBox");
-    const loadingText = document.getElementById("loadingText");
-    const loadingTimer = document.getElementById("loadingTimer");
+<script>
+const BACKEND_BASE = "http://localhost:8000";
+const $ = id => document.getElementById(id);
+const queryInput=$("queryInput"), imageInput=$("imageInput"), imagePreviewContainer=$("imagePreviewContainer"),
+  imagePreview=$("imagePreview"), imageDetails=$("imageDetails"), btnMic=$("btnMic"), btnSubmit=$("btnSubmit"),
+  statusMsg=$("statusMsg"), comboHint=$("comboHint"), loadingBox=$("loadingBox"), loadingText=$("loadingText"),
+  loadingTimer=$("loadingTimer"), telemetryBar=$("telemetryBar"), resultsContainer=$("resultsContainer"), toast=$("toast");
 
-    const telemetryBar = document.getElementById("telemetryBar");
-    const metaLatency = document.getElementById("metaLatency");
-    const metaCache = document.getElementById("metaCache");
-    const metaCacheNote = document.getElementById("metaCacheNote");
-    const metaModel = document.getElementById("metaModel");
-    const metaCost = document.getElementById("metaCost");
+let selectedImageFile = null, timerInterval = null, recognition = null, isRecording = false;
+let lastQuery = "";   // query used for the current diagnosis (sent to /v1/clarify)
 
-    const resultsContainer = document.getElementById("resultsContainer");
-    const toast = document.getElementById("toast");
+function escapeHtml(s){ if(!s) return ""; return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
+function showToast(m){ toast.textContent=m; toast.classList.add("show"); setTimeout(()=>toast.classList.remove("show"),3000); }
+function setStatus(t,err=false){ statusMsg.textContent=t; statusMsg.style.color=err?"#f87171":"#94a3b8"; }
+function updateComboHint(){
+  const hasText = queryInput.value.trim().length>0;
+  comboHint.textContent = (selectedImageFile && hasText) ? "📷 + ✍️ Photo and description will be analysed together." :
+    selectedImageFile ? "Tip: add a short description alongside the photo for a more accurate diagnosis." : "";
+}
+queryInput.addEventListener("input", updateComboHint);
 
-    let selectedImageFile = null;
-    let timerInterval = null;
-    let recognition = null;
-    let isRecording = false;
+document.querySelectorAll(".sample-pill").forEach(p=>p.addEventListener("click",()=>{
+  queryInput.value=p.dataset.query; clearImage(); setStatus("Sample loaded. Click 'Diagnose Issue' to run.");
+}));
 
-    // Toast feedback
-    function showToast(message) {
-      toast.textContent = message;
-      toast.classList.add("show");
-      setTimeout(() => {
-        toast.classList.remove("show");
-      }, 3000);
-    }
+// ---- Voice ----
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SR) {
+  recognition = new SR(); recognition.continuous=false; recognition.interimResults=true; recognition.lang="en-US";
+  const idle=()=>{ isRecording=false; btnMic.classList.remove("recording"); btnMic.innerHTML="🎤 Speak"; };
+  recognition.onstart=()=>{ isRecording=true; btnMic.classList.add("recording"); btnMic.innerHTML="⏹ Listening..."; setStatus("Listening... speak into your microphone."); };
+  recognition.onresult=e=>{ let t=""; for(let i=e.resultIndex;i<e.results.length;i++) t+=e.results[i][0].transcript; queryInput.value=t; updateComboHint(); };
+  recognition.onerror=e=>{ idle(); setStatus(`Voice error: ${e.error}. Try again or type your complaint.`,true); };
+  recognition.onend=()=>{ idle(); setStatus(queryInput.value.trim()?"Voice captured! Review it and click 'Diagnose Issue'.":""); };
+  btnMic.addEventListener("click",()=>{ if(isRecording) recognition.stop(); else { try{recognition.start();}catch(e){console.error(e);} } });
+} else {
+  btnMic.addEventListener("click",()=>alert("Web Speech API isn't supported here. Use Chrome or Edge for voice input."));
+}
 
-    // Set status message
-    function setStatus(text, isError = false) {
-      statusMsg.textContent = text;
-      statusMsg.style.color = isError ? "#f87171" : "#94a3b8";
-    }
+// ---- Photo ----
+$("btnUploadPhoto").addEventListener("click",()=>imageInput.click());
+imageInput.addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f) return;
+  selectedImageFile=f; imageDetails.textContent=`${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+  const r=new FileReader(); r.onload=ev=>{ imagePreview.src=ev.target.result; imagePreviewContainer.style.display="flex"; }; r.readAsDataURL(f);
+  setStatus("Photo attached. Add a description if you like, then click 'Diagnose Issue'."); updateComboHint();
+});
+$("btnRemoveImg").addEventListener("click",clearImage);
+function clearImage(){ selectedImageFile=null; imageInput.value=""; imagePreview.src=""; imagePreviewContainer.style.display="none"; updateComboHint(); }
 
-    // Sample Pills Click
-    document.querySelectorAll(".sample-pill").forEach(pill => {
-      pill.addEventListener("click", () => {
-        queryInput.value = pill.getAttribute("data-query");
-        clearImage();
-        setStatus("Sample query loaded. Click 'Diagnose Issue' to run.");
-      });
-    });
+// ---- Loading ----
+function showLoading(msg){
+  loadingText.textContent=msg; loadingBox.style.display="flex"; resultsContainer.innerHTML=""; telemetryBar.style.display="none"; btnSubmit.disabled=true;
+  const start=performance.now(); clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{ loadingTimer.textContent=`Elapsed: ${((performance.now()-start)/1000).toFixed(1)}s`; },100);
+}
+function hideLoading(){ clearInterval(timerInterval); loadingBox.style.display="none"; btnSubmit.disabled=false; }
 
-    // -----------------------------------------------------------------------
-    // PART 2: Web Speech API Integration
-    // -----------------------------------------------------------------------
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+// ---- Submit (text, image, or both) ----
+btnSubmit.addEventListener("click", submitDiagnosis);
+queryInput.addEventListener("keydown",e=>{ if(e.key==="Enter" && (e.ctrlKey||e.metaKey)) submitDiagnosis(); });
 
-    if (SpeechRecognition) {
-      recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.lang = "en-US";
-
-      recognition.onstart = () => {
-        isRecording = true;
-        btnMic.classList.add("recording");
-        btnMic.innerHTML = "⏹ Listening...";
-        setStatus("Listening for your complaint... Speak into your microphone.");
-      };
-
-      recognition.onresult = (event) => {
-        let transcript = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
-        }
-        queryInput.value = transcript;
-      };
-
-      recognition.onerror = (event) => {
-        isRecording = false;
-        btnMic.classList.remove("recording");
-        btnMic.innerHTML = "🎤 Speak";
-        setStatus(`Voice error: ${event.error}. Please try again or type complaint.`, true);
-      };
-
-      recognition.onend = () => {
-        isRecording = false;
-        btnMic.classList.remove("recording");
-        btnMic.innerHTML = "🎤 Speak";
-        if (queryInput.value.trim()) {
-          setStatus("Voice captured! Review your complaint and click 'Diagnose Issue'.");
-        } else {
-          setStatus("");
-        }
-      };
-
-      btnMic.addEventListener("click", () => {
-        if (isRecording) {
-          recognition.stop();
-        } else {
-          try {
-            recognition.start();
-          } catch (e) {
-            console.error("Speech start error:", e);
-          }
-        }
-      });
+async function submitDiagnosis(){
+  const text = queryInput.value.trim();
+  if(!text && !selectedImageFile){ setStatus("Type a complaint, use the mic, or attach a device photo.",true); queryInput.focus(); return; }
+  setStatus("");
+  lastQuery = text || "Device problem shown in the attached photo";
+  let data = null;
+  try{
+    let response;
+    if(selectedImageFile){
+      showLoading(text ? "Analysing photo + description with Gemini Vision..." : "Analysing device photo with Gemini Vision...");
+      const fd=new FormData(); fd.append("file",selectedImageFile); if(text) fd.append("query",text);
+      response=await fetch(`${BACKEND_BASE}/v1/troubleshoot-image`,{method:"POST",body:fd});
     } else {
-      btnMic.addEventListener("click", () => {
-        alert("Web Speech API is not supported in this browser. Please use Google Chrome or Microsoft Edge for voice input.");
-      });
+      showLoading("Diagnosing issue with Gemini AI...");
+      response=await fetch(`${BACKEND_BASE}/v1/troubleshoot`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:text})});
     }
+    if(!response.ok) throw new Error(`Server returned HTTP ${response.status}: ${response.statusText}`);
+    data = await response.json();
+    renderResponse(data, parseCacheDecision(response.headers.get("X-Cache-Decision")));
+  }catch(err){
+    console.error("Diagnosis error:",err); renderError(err.message);
+  }finally{ hideLoading(); }
+  if(data) maybeClarify(data);   // non-blocking follow-up
+}
 
-    // -----------------------------------------------------------------------
-    // PART 3: Photo Upload Flow
-    // -----------------------------------------------------------------------
-    btnUploadPhoto.addEventListener("click", () => {
-      imageInput.click();
+// ---- Cache decision (from X-Cache-Decision header) ----
+function parseCacheDecision(header){
+  const m=/^([a-z_]+)(?:; sim=([\d.]+))?(?:; matched=(.*))?$/.exec(header||"");
+  if(!m) return null;
+  let matched=m[3]||""; try{ matched=decodeURIComponent(matched); }catch(e){}
+  return {decision:m[1],simPct:Math.round(parseFloat(m[2]||"0")*100),matched};
+}
+function describeCacheDecision(cd){
+  if(!cd) return null;
+  if(cd.decision==="hit") return `Served from cache — matched '${cd.matched}' (${cd.simPct}%)`;
+  if(cd.decision.startsWith("veto_")){
+    const why=cd.decision==="veto_polarity"?"means the opposite":"is about a different setting";
+    return `Cache VETOED — looked ${cd.simPct}% similar to '${cd.matched}' but ${why}`;
+  }
+  return null;
+}
+
+// ---- Clarify flow ----
+function extract(data){
+  if(data.response && Array.isArray(data.response.contexts)) return {contexts:data.response.contexts,fallback:data.response.fallback,message:data.response.message||data.message,meta:data.meta||{}};
+  return {contexts:Array.isArray(data.contexts)?data.contexts:[],fallback:data.fallback,message:data.message,meta:data.meta||{}};
+}
+
+async function maybeClarify(data){
+  const {contexts,fallback}=extract(data);
+  if(fallback || contexts.length<2) return;
+  const hypotheses=contexts.slice(0,2).map(c=>({title:c.title,score:c.score}));
+  try{
+    const r=await fetch(`${BACKEND_BASE}/v1/clarify`,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({query:lastQuery,hypotheses,clarification_answer:null})});
+    if(!r.ok) return;
+    const c=await r.json();
+    if(c.needs_clarification && c.question) renderClarifyCard(c.question,hypotheses);
+  }catch(e){ console.warn("Clarify check failed (non-fatal):",e); }
+}
+
+function renderClarifyCard(question,hyps){
+  const [a,b]=hyps.map(h=>h.title.toLowerCase());
+  const answers=[`It started with ${a}`,`It involves ${b}`,"Both, or I'm not sure"];
+  const chips=answers.map(t=>`<button type="button" class="chip chip-lg" data-answer="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join("");
+  const html=`
+    <div class="clarify-card" id="clarifyCard">
+      <div class="clarify-tag">🤔 Help us narrow it down</div>
+      <div class="clarify-q">${escapeHtml(question)}</div>
+      <div class="chip-row">${chips}</div>
+      <div class="clarify-free">
+        <input type="text" class="text-input" id="clarifyText" placeholder="Or describe in your own words...">
+        <button type="button" class="btn-secondary" id="clarifySend">Send</button>
+      </div>
+      <button type="button" class="btn-link" id="clarifySkip">Skip — keep the results below</button>
+    </div>`;
+  resultsContainer.insertAdjacentHTML("afterbegin",html);
+  const card=$("clarifyCard");
+  card.querySelectorAll(".chip").forEach(c=>c.addEventListener("click",()=>submitClarification(c.dataset.answer)));
+  $("clarifySend").addEventListener("click",()=>{ const v=$("clarifyText").value.trim(); if(v) submitClarification(v); });
+  $("clarifyText").addEventListener("keydown",e=>{ if(e.key==="Enter"){ const v=e.target.value.trim(); if(v) submitClarification(v); } });
+  $("clarifySkip").addEventListener("click",()=>card.remove());
+}
+
+async function submitClarification(answer){
+  const prevHyps=[...resultsContainer.querySelectorAll(".goal-title")]; // just to ensure results existed
+  const hypotheses=window.__lastHyps || [];
+  try{
+    showLoading("Refining diagnosis with your answer...");
+    const r=await fetch(`${BACKEND_BASE}/v1/clarify`,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({query:lastQuery,hypotheses,clarification_answer:answer})});
+    if(!r.ok) throw new Error(`Server returned HTTP ${r.status}: ${r.statusText}`);
+    const data=await r.json();
+    renderResponse(data);
+    resultsContainer.insertAdjacentHTML("afterbegin",`<div class="refined-banner">✅ Refined using your answer: “${escapeHtml(answer)}”</div>`);
+  }catch(err){ console.error(err); renderError(err.message); }
+  finally{ hideLoading(); }
+}
+
+// ---- Rendering ----
+function renderError(msg){
+  telemetryBar.style.display="none";
+  resultsContainer.innerHTML=`<div class="card no-match-box"><div class="no-match-icon">⚠️</div><div class="no-match-title">Something went wrong</div>
+    <div class="no-match-desc">${escapeHtml(msg)}<br><small style="color:#64748b;display:inline-block;margin-top:8px">Make sure the backend is running at <code>${BACKEND_BASE}</code> (e.g. <code>uvicorn backend.main:app --port 8000</code>).</small></div></div>`;
+}
+
+function buildReasoningTrace(goal,gIdx,contexts,meta,cacheDecision){
+  if(!goal) return [];
+  const t=[], actions=Array.isArray(goal.actions)?goal.actions:[], pct=Math.round((goal.score||0)*100);
+  t.push(`Matched at ${pct}% confidence via diagnostic catalog retrieval`);
+  if(goal.self_critique) t.push(`Agentic critique: ${goal.self_critique}`);
+  const seq=actions.map(a=>(a.category||"manual").toLowerCase());
+  t.push(`Validated ${actions.length} action${actions.length===1?"":"s"}: ${seq.length?seq.join(" → "):"none"}`);
+  let resolved=0, autoNoLink=0, guarded=0;
+  actions.forEach(a=>(Array.isArray(a.stepGroups)?a.stepGroups:[]).forEach(sg=>{
+    if(sg && sg.actionableDeeplink && sg.actionableDeeplink.deeplink) resolved++;
+    else if(a.category==="auto") autoNoLink++; else guarded++;
+  }));
+  if(resolved>0 && autoNoLink===0) t.push(`Deeplink integrity: 0 broken links (${resolved} resolved, ${guarded} non-settings steps guarded)`);
+  else if(autoNoLink>0) t.push(`Deeplink integrity: ${resolved} resolved, ${autoNoLink} auto action(s) unlinked`);
+  else t.push("Deeplink integrity: Zero unverified links (manual physical checks / reboot steps safely guarded)");
+  const total=contexts.length; let rank=`Ranked #${gIdx+1} of ${total} hypothes${total===1?"is":"es"}`;
+  if(total>1){ const o=contexts.map((c,i)=>i!==gIdx&&c?Math.round((c.score||0)*100):null).filter(s=>s!==null); if(o.length) rank+=` (score: ${pct}%, alternative: ${o.join("%, ")}%)`; }
+  t.push(rank);
+  if(meta.cache_hit) t.push(`Served from semantic cache in ${meta.latency_ms??0}ms`);
+  const cl=describeCacheDecision(cacheDecision); if(cl) t.push(cl);
+  return t;
+}
+
+function renderResponse(data,cacheDecision=null){
+  const {contexts,fallback,message,meta}=extract(data);
+  window.__lastHyps = contexts.slice(0,2).map(c=>({title:c.title,score:c.score}));
+
+  $("metaLatency").textContent=`${meta.latency_ms??0} ms`;
+  $("metaModel").textContent=meta.model||"gemini-3.6-flash";
+  $("metaCost").textContent=`$${(meta.cost_usd||0).toFixed(6)}`;
+  const hit=!!meta.cache_hit; $("metaCache").textContent=hit?"HIT":"MISS"; $("metaCache").className="cache-badge "+(hit?"cache-hit":"cache-miss");
+  const note=describeCacheDecision(cacheDecision);
+  $("metaCacheNote").textContent=note||""; $("metaCacheNote").className=note?"cache-note "+(cacheDecision.decision==="hit"?"cache-note-hit":"cache-note-veto"):"cache-note";
+  telemetryBar.style.display="flex";
+
+  if(fallback==="vision_unavailable"){
+    resultsContainer.innerHTML=`<div class="card no-match-box"><div class="no-match-icon">📷</div><div class="no-match-title">Image Analysis Unavailable</div>
+      <div class="no-match-desc">${escapeHtml(message||"We couldn't analyze this image right now. Please describe the issue in text instead.")}</div></div>`;
+    return;
+  }
+  if(fallback==="no_match"||fallback==="no_siis_context"||contexts.length===0){
+    resultsContainer.innerHTML=`<div class="card no-match-box"><div class="no-match-icon">🔍</div><div class="no-match-title">No matching troubleshooting plan found</div>
+      <div class="no-match-desc">The engine couldn't confirm a high-confidence remediation in the catalog.<br>Try specific hardware or settings symptoms (e.g. 'swipe navigation', 'battery drain', 'camera reset').</div></div>`;
+    return;
+  }
+
+  let html="";
+  contexts.forEach((goal,gIdx)=>{
+    const pct=Math.round((goal.score||0)*100);
+    const trace=buildReasoningTrace(goal,gIdx,contexts,meta,cacheDecision).map(i=>`<li class="trace-item">${escapeHtml(i)}</li>`).join("");
+    html+=`<div class="goal-card">
+      <div class="goal-header">
+        <div><div class="goal-title">Hypothesis ${gIdx+1}: ${escapeHtml(goal.title)}</div><div class="goal-instruction">${escapeHtml(goal.goal)}</div></div>
+        <div class="conf"><div class="conf-num">${pct}%</div><div class="conf-label">Confidence</div><div class="conf-bar"><div class="conf-fill" style="width:${pct}%"></div></div></div>
+      </div>
+      <details class="diagnosis-trace"><summary class="trace-summary"><span>🔍 Why this diagnosis?</span><span class="trace-summary-hint">View reasoning trace</span></summary><ul class="trace-list">${trace}</ul></details>
+      <div class="actions-list">`;
+    (goal.actions||[]).forEach(act=>{
+      const cat=(act.category||"manual").toLowerCase();
+      const label=cat==="auto"?"Auto · In-App Settings":cat==="critical"?"Critical · Reset/Reboot":"Manual · Physical Check";
+      let steps="", dl=null;
+      (act.stepGroups||[]).forEach(sg=>{ (sg.steps||[]).forEach(s=>steps+=`<li><span>${escapeHtml(s)}</span></li>`); if(sg.actionableDeeplink) dl=sg.actionableDeeplink; });
+      const dlBtn=dl?`<button type="button" class="deeplink-btn" data-uri="${escapeHtml(dl.deeplink)}"><span>⚙️ Open in Settings</span><span class="deeplink-uri">(${escapeHtml(dl.deeplink)})</span></button>`:"";
+      html+=`<div class="action-item cat-${cat}">
+        <div class="action-header"><span class="category-badge category-${cat}">${label}</span><span class="action-name">${escapeHtml(act.actionName)}</span></div>
+        <div class="action-desc">${escapeHtml(act.description)}</div>
+        <ol class="steps-list">${steps}</ol>${dlBtn}</div>`;
     });
+    html+=`</div></div>`;
+  });
+  resultsContainer.innerHTML=html;
+}
 
-    imageInput.addEventListener("change", (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        selectedImageFile = file;
-        imageDetails.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-        
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          imagePreview.src = event.target.result;
-          imagePreviewContainer.style.display = "flex";
-        };
-        reader.readAsDataURL(file);
-        setStatus("Photo selected! Click 'Diagnose Issue' to analyze with Gemini Vision.");
-      }
-    });
-
-    btnRemoveImg.addEventListener("click", clearImage);
-
-    function clearImage() {
-      selectedImageFile = null;
-      imageInput.value = "";
-      imagePreview.src = "";
-      imagePreviewContainer.style.display = "none";
-    }
-
-    // -----------------------------------------------------------------------
-    // PART 1: Submit & Rendering Pipeline
-    // -----------------------------------------------------------------------
-    btnSubmit.addEventListener("click", submitDiagnosis);
-    queryInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-        submitDiagnosis();
-      }
-    });
-
-    function showLoading(msg = "Diagnosing issue with Gemini AI...") {
-      loadingText.textContent = msg;
-      loadingBox.style.display = "flex";
-      resultsContainer.innerHTML = "";
-      telemetryBar.style.display = "none";
-      btnSubmit.disabled = true;
-
-      const start = performance.now();
-      timerInterval = setInterval(() => {
-        const sec = ((performance.now() - start) / 1000).toFixed(1);
-        loadingTimer.textContent = `Elapsed: ${sec}s`;
-      }, 100);
-    }
-
-    function hideLoading() {
-      clearInterval(timerInterval);
-      loadingBox.style.display = "none";
-      btnSubmit.disabled = false;
-    }
-
-    async function submitDiagnosis() {
-      const textQuery = queryInput.value.trim();
-
-      if (!textQuery && !selectedImageFile) {
-        setStatus("Please type a complaint, speak into the mic, or attach a device photo.", true);
-        queryInput.focus();
-        return;
-      }
-
-      setStatus("");
-
-      try {
-        let response;
-        if (selectedImageFile) {
-          // Send image to /v1/troubleshoot-image
-          showLoading("Analyzing device photo with Gemini Vision...");
-          const formData = new FormData();
-          formData.append("file", selectedImageFile);
-          if (textQuery) {
-            formData.append("query", textQuery);
-          }
-
-          response = await fetch(`${BACKEND_BASE}/v1/troubleshoot-image`, {
-            method: "POST",
-            body: formData,
-          });
-        } else {
-          // Send text complaint to /v1/troubleshoot
-          showLoading("Diagnosing issue with Gemini AI...");
-          response = await fetch(`${BACKEND_BASE}/v1/troubleshoot`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: jsonPayload(textQuery),
-          });
-        }
-
-        if (!response.ok) {
-          throw new Error(`Server returned HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        renderResponse(data, parseCacheDecision(response.headers.get("X-Cache-Decision")));
-      } catch (err) {
-        console.error("Diagnosis error:", err);
-        renderError(err.message);
-      } finally {
-        hideLoading();
-      }
-    }
-
-    function jsonPayload(text) {
-      return JSON.stringify({ query: text });
-    }
-
-    // "hit; sim=0.93; matched=wifi won't connect" -> { decision, simPct, matched }
-    function parseCacheDecision(header) {
-      const m = /^([a-z_]+)(?:; sim=([\d.]+))?(?:; matched=(.*))?$/.exec(header || "");
-      if (!m) return null;
-      let matched = m[3] || "";
-      try { matched = decodeURIComponent(matched); } catch (e) { /* show as-is */ }
-      return { decision: m[1], simPct: Math.round(parseFloat(m[2] || "0") * 100), matched };
-    }
-
-    function describeCacheDecision(cd) {
-      if (!cd) return null;
-      if (cd.decision === "hit") {
-        return `Served from cache — matched '${cd.matched}' (${cd.simPct}%)`;
-      }
-      if (cd.decision.startsWith("veto_")) {
-        const why = cd.decision === "veto_polarity" ? "means the opposite" : "is about a different setting";
-        return `Cache VETOED — looked ${cd.simPct}% similar to '${cd.matched}' but ${why}`;
-      }
-      return null;
-    }
-
-    function renderError(errMsg) {
-      telemetryBar.style.display = "none";
-      resultsContainer.innerHTML = `
-        <div class="card no-match-box">
-          <div class="no-match-icon">⚠️</div>
-          <div class="no-match-title">Something went wrong</div>
-          <div class="no-match-desc">
-            ${errMsg}<br>
-            <small style="color: #64748b; margin-top: 8px; display: inline-block;">
-              Make sure the backend is running at <code>${BACKEND_BASE}</code> (e.g. <code>uvicorn backend.main:app --port 8000</code>).
-            </small>
-          </div>
-        </div>
-      `;
-    }
-
-    function buildReasoningTrace(goal, gIdx, contexts, meta, cacheDecision) {
-      if (!goal) return [];
-
-      const traceSteps = [];
-      const allContexts = Array.isArray(contexts) ? contexts : [];
-      const actions = Array.isArray(goal.actions) ? goal.actions : [];
-      const metaObj = meta || {};
-
-      // 1. Relevance / Match line (uses goal.score)
-      const scorePct = Math.round((goal.score || 0) * 100);
-      traceSteps.push(`Matched at ${scorePct}% confidence via diagnostic catalog retrieval`);
-
-      // Agentic self-critique explanation if surfaced by model
-      if (goal.self_critique) {
-        traceSteps.push(`Agentic critique: ${goal.self_critique}`);
-      }
-
-      // 2. Validation summary line (uses goal.actions[].category)
-      const catSeq = actions.map(a => (a.category || "manual").toLowerCase());
-      const catSequenceStr = catSeq.length > 0 ? catSeq.join(" → ") : "none";
-      traceSteps.push(
-        `Validated ${actions.length} action${actions.length === 1 ? "" : "s"}: ${catSequenceStr}`
-      );
-
-      // 3. Deeplink status line (defensively inspects stepGroups[].actionableDeeplink)
-      let resolvedLinksCount = 0;
-      let autoWithoutLinkCount = 0;
-      let guardedCount = 0;
-
-      actions.forEach(a => {
-        const isAuto = (a.category === "auto");
-        const sgs = Array.isArray(a.stepGroups) ? a.stepGroups : [];
-        sgs.forEach(sg => {
-          if (sg && sg.actionableDeeplink && sg.actionableDeeplink.deeplink) {
-            resolvedLinksCount++;
-          } else if (isAuto) {
-            autoWithoutLinkCount++;
-          } else {
-            guardedCount++;
-          }
-        });
-      });
-
-      if (resolvedLinksCount > 0 && autoWithoutLinkCount === 0) {
-        traceSteps.push(
-          `Deeplink integrity: 0 broken links (${resolvedLinksCount} resolved, ${guardedCount} non-settings steps guarded)`
-        );
-      } else if (autoWithoutLinkCount > 0) {
-        traceSteps.push(
-          `Deeplink integrity: ${resolvedLinksCount} resolved, ${autoWithoutLinkCount} auto action(s) unlinked`
-        );
-      } else {
-        traceSteps.push(
-          `Deeplink integrity: Zero unverified links (manual physical checks / reboot steps safely guarded)`
-        );
-      }
-
-      // 4. Ranking line (uses gIdx position in contexts array and relative scores)
-      const total = allContexts.length;
-      const rank = gIdx + 1;
-      let rankStr = `Ranked #${rank} of ${total} hypothes${total === 1 ? "is" : "es"}`;
-      if (total > 1) {
-        const otherScores = allContexts
-          .map((c, i) => (i !== gIdx && c ? Math.round((c.score || 0) * 100) : null))
-          .filter(s => s !== null);
-        if (otherScores.length > 0) {
-          rankStr += ` (score: ${scorePct}%, alternative: ${otherScores.join("%, ")}%)`;
-        }
-      }
-      traceSteps.push(rankStr);
-
-      // 5. Cache & Telemetry line (conditional on meta.cache_hit)
-      if (metaObj.cache_hit) {
-        traceSteps.push(`Served from semantic cache in ${metaObj.latency_ms ?? 0}ms`);
-      }
-      const cacheLine = describeCacheDecision(cacheDecision);
-      if (cacheLine) {
-        traceSteps.push(cacheLine);
-      }
-
-      return traceSteps;
-    }
-
-    function renderResponse(data, cacheDecision) {
-      // Extract contexts, fallback, and meta across both Flat and Appendix B shapes
-      let contexts = [];
-      let fallback = null;
-      let meta = data.meta || {};
-
-      if (data.response && Array.isArray(data.response.contexts)) {
-        // Appendix B shape
-        contexts = data.response.contexts;
-        fallback = data.response.fallback;
-      } else if (Array.isArray(data.contexts)) {
-        // Flat shape
-        contexts = data.contexts;
-        fallback = data.fallback;
-      }
-
-      // Render Telemetry Bar
-      metaLatency.textContent = `${meta.latency_ms ?? 0} ms`;
-      metaModel.textContent = meta.model || "gemini-3.6-flash";
-      metaCost.textContent = `$${(meta.cost_usd || 0).toFixed(6)}`;
-
-      if (meta.cache_hit) {
-        metaCache.textContent = "HIT";
-        metaCache.className = "cache-badge cache-hit";
-      } else {
-        metaCache.textContent = "MISS";
-        metaCache.className = "cache-badge cache-miss";
-      }
-      const cacheNote = describeCacheDecision(cacheDecision);
-      metaCacheNote.textContent = cacheNote || "";
-      metaCacheNote.className = cacheNote
-        ? `cache-note ${cacheDecision.decision === "hit" ? "cache-note-hit" : "cache-note-veto"}`
-        : "cache-note";
-      telemetryBar.style.display = "flex";
-
-      // Case: Vision analysis unavailable
-      if (fallback === "vision_unavailable") {
-        resultsContainer.innerHTML = `
-          <div class="card no-match-box">
-            <div class="no-match-icon">📷</div>
-            <div class="no-match-title">Image Analysis Unavailable</div>
-            <div class="no-match-desc">
-              ${escapeHtml(data.message || "We couldn't analyze this image right now. Please describe the issue in text instead.")}
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      // Case: No match / fallback
-      if (fallback === "no_match" || fallback === "no_siis_context" || contexts.length === 0) {
-        resultsContainer.innerHTML = `
-          <div class="card no-match-box">
-            <div class="no-match-icon">🔍</div>
-            <div class="no-match-title">No matching troubleshooting plan found</div>
-            <div class="no-match-desc">
-              The engine analyzed the complaint but could not confirm a high-confidence remediation in the catalog.<br>
-              Try phrasing with specific hardware or settings symptoms (e.g., 'swipe navigation', 'battery drain', 'camera reset').
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      // Render Ranked Goals
-      let html = "";
-      contexts.forEach((goal, gIdx) => {
-        const scorePct = Math.round((goal.score || 0) * 100);
-
-        // Synthesize client-side reasoning trace from existing response fields
-        const traceItems = buildReasoningTrace(goal, gIdx, contexts, meta, cacheDecision);
-        let traceSectionHtml = "";
-        if (traceItems.length > 0) {
-          const traceListHtml = traceItems
-            .map(item => `<li class="trace-item">${escapeHtml(item)}</li>`)
-            .join("");
-          traceSectionHtml = `
-            <details class="diagnosis-trace">
-              <summary class="trace-summary">
-                <span>🔍 Why this diagnosis?</span>
-                <span class="trace-summary-hint">View reasoning trace</span>
-              </summary>
-              <ul class="trace-list">
-                ${traceListHtml}
-              </ul>
-            </details>
-          `;
-        }
-
-        html += `
-          <div class="goal-card">
-            <div class="goal-header">
-              <div>
-                <div class="goal-title">Hypothesis ${gIdx + 1}: ${escapeHtml(goal.title)}</div>
-                <div class="goal-instruction">${escapeHtml(goal.goal)}</div>
-              </div>
-              <div class="score-badge">Confidence: ${scorePct}%</div>
-            </div>
-            ${traceSectionHtml}
-
-            <div class="actions-list">
-        `;
-
-        (goal.actions || []).forEach((act) => {
-          const cat = (act.category || "manual").toLowerCase();
-          const catClass = `category-${cat}`;
-          const catLabel = cat === "auto" ? "AUTO · In-App Settings" : (cat === "critical" ? "CRITICAL · Reset/Reboot" : "MANUAL · Physical Check");
-
-          let stepsHtml = "";
-          let deeplinkObj = null;
-
-          (act.stepGroups || []).forEach(sg => {
-            (sg.steps || []).forEach(step => {
-              stepsHtml += `<li>${escapeHtml(step)}</li>`;
-            });
-            if (sg.actionableDeeplink) {
-              deeplinkObj = sg.actionableDeeplink;
-            }
-          });
-
-          let deeplinkButtonHtml = "";
-          if (deeplinkObj) {
-            deeplinkButtonHtml = `
-              <button type="button" class="deeplink-btn" onclick="handleDeeplinkClick('${escapeHtml(deeplinkObj.deeplink)}')">
-                <span>⚙️ Open in Settings</span>
-                <span class="deeplink-uri">(${escapeHtml(deeplinkObj.deeplink)})</span>
-              </button>
-            `;
-          }
-
-          html += `
-            <div class="action-item">
-              <div class="action-header">
-                <span class="category-badge ${catClass}">${catLabel}</span>
-                <span class="action-name">${escapeHtml(act.actionName)}</span>
-              </div>
-              <div class="action-desc">${escapeHtml(act.description)}</div>
-              <ol class="steps-list">
-                ${stepsHtml}
-              </ol>
-              ${deeplinkButtonHtml}
-            </div>
-          `;
-        });
-
-        html += `
-            </div>
-          </div>
-        `;
-      });
-
-      resultsContainer.innerHTML = html;
-    }
-
-    window.handleDeeplinkClick = function(uri) {
-      showToast(`📱 Simulated One UI Deep Link: ${uri}`);
-    };
-
-    function escapeHtml(str) {
-      if (!str) return "";
-      return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-    }
-  </script>
+// Deeplink clicks (event delegation, no inline handlers)
+resultsContainer.addEventListener("click",e=>{
+  const b=e.target.closest(".deeplink-btn"); if(b) showToast(`📱 Simulated One UI Deep Link: ${b.dataset.uri}`);
+});
+</script>
 </body>
 </html>
