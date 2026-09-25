@@ -405,23 +405,48 @@ _REAL_SETTINGS_SCREEN_PATTERNS = [
 ]
 
 _GENERIC_MATCH_WORDS = {
-    "device", "phone", "mobile", "samsung", "galaxy", "settings", "setting",
-    "options", "option", "feature", "screen", "component", "item", "hardware",
-    "action", "troubleshooting", "configuration", "issue", "problem",
+    "device", "devices", "phone", "phones", "mobile", "samsung", "galaxy", "settings", "setting",
+    "options", "option", "feature", "features", "screen", "screens", "component", "components",
+    "item", "items", "hardware", "action", "actions", "troubleshooting", "configuration",
+    "issue", "issues", "problem", "problems", "glitch", "glitches", "bug", "bugs", "handset",
 }
 
 _DEVICE_DOMAIN_WORDS = set(_GENERIC_MATCH_WORDS) | {
-    "battery", "battry", "batery", "drain", "draining", "drains", "charge", "charging", "charger",
-    "display", "brightness", "bright", "dim", "dimmer", "dark", "darkmode", "refresh", "hz",
-    "navigation", "nav", "swipe", "gesture", "gestures", "navbar",
-    "camera", "cam", "selfie", "photo", "picture", "flash", "torch", "lens", "preview",
-    "lag", "lagging", "lags", "freeze", "freezing", "freezes", "froze", "hang", "stutter",
-    "sluggish", "ram", "memory", "storage", "performance", "crash", "crashes", "crashing",
-    "audio", "sound", "volume", "speaker", "mic", "microphone", "ringtone",
-    "wifi", "wi-fi", "bluetooth", "hotspot", "nfc", "cellular", "data", "network", "sim",
-    "reboot", "restart", "boot", "reset", "update", "app", "apps", "application",
-    "power", "fingerprint", "biometric", "biometrics", "button", "headphone", "touch", "flicker", "flickers",
-    "wallpaper", "lockscreen", "security", "privacy", "accessibility", "sensitivity", "sensor", "keyboard",
+    # Battery & Power
+    "battery", "batteries", "battry", "batery", "drain", "draining", "drained", "drains", "drainage",
+    "charge", "charging", "charger", "chargers", "charged", "overheat", "overheating", "overheated",
+    "heat", "heating", "hot", "warm", "warmth", "deplete", "depleting", "depleted", "depletion",
+    "dying", "dead", "percentage", "percent", "power", "powers", "powered", "shutdown", "shutting",
+    # Display & Screen
+    "display", "displays", "touchscreen", "oled", "amoled", "lcd", "panel", "brightness", "bright",
+    "dim", "dimmer", "dimming", "dimmed", "dark", "darkmode", "refresh", "hz", "tint", "tinted",
+    "flicker", "flickering", "flickers", "burn-in", "pixel", "pixels", "blackout", "unresponsive",
+    "touch", "touches", "touching", "tap", "tapping", "tapped", "ghost",
+    # Navigation & UI Gestures
+    "navigation", "nav", "swipe", "swiping", "swiped", "gesture", "gestures", "navbar", "scroll", "scrolling",
+    # Camera & Imaging
+    "camera", "cameras", "cam", "cams", "webcam", "selfie", "selfies", "photo", "photos", "photograph",
+    "photographs", "picture", "pictures", "pic", "pics", "image", "images", "shot", "shots", "snap", "snaps",
+    "flash", "torch", "lens", "lenses", "preview", "viewfinder", "blur", "blurry", "blurred", "focus",
+    "focusing", "focused", "unfocused", "shutter", "zoom", "zooming", "zoomed", "exposure", "hdr",
+    "video", "videos", "recording", "record", "records", "recorded", "fps",
+    # Performance & System
+    "lag", "lagging", "laggy", "lags", "freeze", "freezing", "freezes", "froze", "frozen", "hang",
+    "hanging", "hangs", "stutter", "stuttering", "stutters", "sluggish", "slow", "slowness", "slower",
+    "ram", "memory", "storage", "space", "full", "performance", "crash", "crashes", "crashing", "crashed",
+    # Audio & Sound
+    "audio", "sound", "sounds", "volume", "speaker", "speakers", "earpiece", "earbud", "earbuds",
+    "headphone", "headphones", "headset", "headsets", "mic", "microphone", "microphones", "ringtone",
+    "ringtones", "buzz", "buzzing", "static", "muffled", "silent", "mute", "muted",
+    # Connectivity
+    "wifi", "wi-fi", "bluetooth", "hotspot", "nfc", "cellular", "data", "network", "sim", "esim",
+    "signal", "reception", "airplane", "pairing", "paired", "disconnect", "disconnected", "disconnecting",
+    # OS, Apps & Security
+    "reboot", "restart", "boot", "reset", "update", "updates", "updating", "updated", "app", "apps",
+    "application", "applications", "firmware", "install", "installing", "uninstall", "notification",
+    "notifications", "fingerprint", "biometric", "biometrics", "facial", "face", "button", "buttons",
+    "key", "keys", "keyboard", "keypad", "wallpaper", "lockscreen", "security", "privacy",
+    "accessibility", "sensitivity", "sensor", "sensors", "vibrate", "vibration", "vibrating", "haptic", "haptics",
 }
 
 
