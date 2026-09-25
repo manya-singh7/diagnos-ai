@@ -125,7 +125,9 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
         ("Performance", "phone is lagging and apps freeze"),
     ]
 
-    for domain, query in domain_queries:
+    for idx, (domain, query) in enumerate(domain_queries):
+        if idx > 0:
+            time.sleep(3)
         try:
             start_t = time.perf_counter()
             r = requests.post(
@@ -174,6 +176,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
     # -----------------------------------------------------------------------
     # Test 3: POST /v1/troubleshoot with off-domain/nonsense query
     # -----------------------------------------------------------------------
+    time.sleep(3)
     nonsense_query = "book me a flight to Paris"
     try:
         start_t = time.perf_counter()
@@ -210,6 +213,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
     # -----------------------------------------------------------------------
     # Test 4: POST /v1/clarify without answer (close-scored hypotheses)
     # -----------------------------------------------------------------------
+    time.sleep(3)
     ambiguous_payload = {
         "query": "phone is acting up and draining battery",
         "hypotheses": [
@@ -249,6 +253,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
     # -----------------------------------------------------------------------
     # Test 5: POST /v1/clarify with answer provided
     # -----------------------------------------------------------------------
+    time.sleep(3)
     resolved_payload = {
         "query": "phone is acting up and draining battery",
         "hypotheses": [
@@ -294,6 +299,7 @@ def run_smoke_tests(base_url: str = DEFAULT_BASE_URL) -> bool:
     # -----------------------------------------------------------------------
     # Test 6: POST /v1/troubleshoot-image with test image file
     # -----------------------------------------------------------------------
+    time.sleep(3)
     try:
         img_bytes = create_test_image_bytes()
         files = {"file": ("device_photo.jpg", img_bytes, "image/jpeg")}
