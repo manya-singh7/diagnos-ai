@@ -612,6 +612,109 @@
     .no-match-desc {
       font-size: 13px;
     }
+
+    /* Self-Critique Rejections Highlight Banner */
+    .critique-rejection-card {
+      background: linear-gradient(135deg, rgba(88, 28, 135, 0.28) 0%, rgba(30, 27, 75, 0.4) 100%);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+      border-left: 4px solid #a855f7;
+      border-radius: 12px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 4px 20px rgba(168, 85, 247, 0.15);
+      animation: fadeInCritique 0.3s ease-in-out;
+    }
+
+    @keyframes fadeInCritique {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .critique-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .critique-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .critique-icon {
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .critique-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #e9d5ff;
+      letter-spacing: 0.2px;
+    }
+
+    .critique-badge {
+      background: rgba(168, 85, 247, 0.2);
+      color: #d8b4fe;
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .critique-rejections-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .critique-rejection-item {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #f1f5f9;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .critique-cand-title {
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .critique-score-tag {
+      display: inline-block;
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: monospace;
+    }
+
+    .critique-reason {
+      color: #cbd5e1;
+    }
+
+    .critique-footer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #c084fc;
+      padding-top: 2px;
+    }
   </style>
 </head>
 <body>
@@ -1052,11 +1155,53 @@
       return traceSteps;
     }
 
+    function buildCritiqueRejectionsHtml(meta, contexts) {
+      const rejections = meta && Array.isArray(meta.critique_rejections) ? meta.critique_rejections : [];
+      if (rejections.length === 0) {
+        return "";
+      }
+
+      const itemsHtml = rejections.map(rej => {
+        const title = escapeHtml(rej.title || "Unknown Candidate");
+        const scoreVal = typeof rej.score === "number" ? rej.score.toFixed(2) : escapeHtml(String(rej.score ?? "0.00"));
+        const reason = escapeHtml(rej.reason || "Relevance criteria not met");
+        return `
+          <div class="critique-rejection-item">
+            Initial candidate: '<span class="critique-cand-title">${title}</span>' — flagged as low-relevance (score <span class="critique-score-tag">${scoreVal}</span>) — <span class="critique-reason">${reason}</span>
+          </div>
+        `;
+      }).join("");
+
+      const hasVerified = Array.isArray(contexts) && contexts.length > 0;
+      const footerMsg = hasVerified
+        ? `Discarded. Showing verified result${contexts.length > 1 ? "s" : ""} below.`
+        : "Discarded. No remaining candidates met the relevance threshold.";
+
+      return `
+        <div class="critique-rejection-card">
+          <div class="critique-header">
+            <div class="critique-title-group">
+              <span class="critique-icon">🧠</span>
+              <h3 class="critique-title">Self-Critique in Action</h3>
+            </div>
+            <span class="critique-badge">AI Safety Guard</span>
+          </div>
+          <div class="critique-rejections-list">
+            ${itemsHtml}
+          </div>
+          <div class="critique-footer">
+            <span>🛡️</span>
+            <span>${footerMsg}</span>
+          </div>
+        </div>
+      `;
+    }
+
     function renderResponse(data, cacheDecision) {
       // Extract contexts, fallback, and meta across both Flat and Appendix B shapes
       let contexts = [];
       let fallback = null;
-      let meta = data.meta || {};
+      let meta = data.meta || (data.response && data.response.meta) || {};
 
       if (data.response && Array.isArray(data.response.contexts)) {
         // Appendix B shape
@@ -1103,7 +1248,9 @@
 
       // Case: No match / fallback
       if (fallback === "no_match" || fallback === "no_siis_context" || contexts.length === 0) {
+        const critiqueBannerHtml = buildCritiqueRejectionsHtml(meta, contexts);
         resultsContainer.innerHTML = `
+          ${critiqueBannerHtml}
           <div class="card no-match-box">
             <div class="no-match-icon">🔍</div>
             <div class="no-match-title">No matching troubleshooting plan found</div>
@@ -1117,7 +1264,7 @@
       }
 
       // Render Ranked Goals
-      let html = "";
+      let html = buildCritiqueRejectionsHtml(meta, contexts);
       contexts.forEach((goal, gIdx) => {
         const scorePct = Math.round((goal.score || 0) * 100);
 
