@@ -12,6 +12,10 @@ google-genai>=2.0.0
 rank-bm25>=0.2.2
 python-dotenv>=1.0.0
 
+# Semantic Cache (ONNX embeddings, no torch)
+fastembed>=0.7.4
+numpy>=1.26
+
 # Evaluation, Smoke Testing & Multimodal Test Harness
 requests>=2.31.0
 pillow>=10.0.0
