@@ -1,6 +1,6 @@
 import re
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -313,6 +313,7 @@ class ResponseMeta(BaseModel):
     cache_hit: bool = Field(..., description="Whether response was served from cache")
     model: Optional[str] = Field(None, description="Model identifier used for inference")
     cost_usd: float = Field(0.0, ge=0.0, description="Inference cost in USD")
+    critique_rejections: Optional[List[Dict[str, Any]]] = None
 
 
 class ContextDeeplinkResponse(BaseModel):

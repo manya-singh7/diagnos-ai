@@ -128,7 +128,29 @@ total_duration = time.perf_counter() - t0
 
 # Verify it timed out in ~2.0s rather than waiting 2.5s+
 assert total_duration < 2.3, f"Expected timeout around 2.0s, took {total_duration:.2f}s"
-assert len(resp_timeout.contexts) == 1, "Should safely retain extracted goals on timeout"
-print(f"[PASS] 2000ms Hard Timeout: Aborted critique after {total_duration:.2f}s and returned extracted goals safely")
+# Verify Test 5 did not populate critique_rejections (no rejections occurred)
+assert resp.meta.critique_rejections is None
+
+# Test 8: Rejected goal populates meta.critique_rejections
+bmain.critique_goals_combined = MagicMock(return_value=(
+    [(True, 0.95, "Directly targets battery drain."), (False, 0.2, "Irrelevant to battery issue.")],
+    {"prompt_tokens": 60, "candidates_tokens": 30}
+))
+bmain.extract_goals = MagicMock(return_value=(
+    [goal1.model_copy(deep=True), goal2.model_copy(deep=True)],
+    {"prompt_tokens": 100, "candidates_tokens": 50}
+))
+
+resp_rejected = bmain.troubleshoot(TroubleshootRequest(query="battery dies fast"), skip_cache_lookup=True)
+assert len(resp_rejected.contexts) == 1
+assert resp_rejected.contexts[0].title == goal1.title
+assert resp_rejected.meta.critique_rejections is not None
+assert len(resp_rejected.meta.critique_rejections) == 1
+assert resp_rejected.meta.critique_rejections[0] == {
+    "title": goal2.title,
+    "score": 0.2,
+    "reason": "Irrelevant to battery issue.",
+}
+print("[PASS] Rejection tracking: meta.critique_rejections populated correctly when goal is rejected")
 
 print("\nALL COMBINED CRITIQUE & SLA GUARD TESTS PASSED SUCCESSFULLY!")

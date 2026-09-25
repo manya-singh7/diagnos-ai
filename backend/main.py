@@ -1560,6 +1560,8 @@ def troubleshoot(
         "ENABLE_SELF_CRITIQUE", "true" if ENABLE_SELF_CRITIQUE else "false"
     ).strip().lower() in ("true", "1", "yes")
 
+    critique_rejections: Optional[List[Dict[str, Any]]] = None
+
     if should_self_critique and active_client is not None and goals:
         elapsed_so_far_ms = int((time.perf_counter() - start_time) * 1000)
         if elapsed_so_far_ms <= 4000:
@@ -1577,6 +1579,7 @@ def troubleshoot(
                 token_usage["candidates_tokens"] += critique_tokens.get("candidates_tokens", 0)
 
                 critiqued_goals: List[Goal] = []
+                rejections: List[Dict[str, Any]] = []
                 for g, (is_rel, rel_score, critique_text) in zip(goals, eval_results):
                     if is_rel and rel_score >= 0.5:
                         g.score = round(g.score * rel_score, 4)
@@ -1589,7 +1592,14 @@ def troubleshoot(
                             raw_query,
                             rel_score,
                         )
+                        rejections.append({
+                            "title": g.title,
+                            "score": rel_score,
+                            "reason": critique_text,
+                        })
                 goals = critiqued_goals
+                if rejections:
+                    critique_rejections = rejections
             except concurrent.futures.TimeoutError:
                 logger.warning(
                     "Self-critique call exceeded 2000ms hard SLA timeout; safely bypassing critique."
@@ -1618,6 +1628,7 @@ def troubleshoot(
         cache_hit=False,
         model=MODEL_NAME,
         cost_usd=cost_usd,
+        critique_rejections=critique_rejections,
     )
 
     # Fallback if no valid goal could be constructed or if discarded by off-domain backstop
