@@ -169,6 +169,60 @@ def run_failover_tests():
     assert mock_backup.models.generate_content.call_count == 1, "Backup served on attempt 1 when primary hit 429"
     print("[PASS] Test 6: Failover successfully covers schema-validation retry attempts inside extract_goals")
 
+    # -------------------------------------------------------------------------
+    # Test 7: Both keys hit 429 -> DualKeyQuotaExhaustedError & Immediate Fail-Fast
+    # -------------------------------------------------------------------------
+    mock_primary.reset_mock()
+    mock_backup.reset_mock()
+    mock_primary.models.generate_content.side_effect = err_429
+    mock_backup.models.generate_content.side_effect = err_429
+
+    # 7a. Direct call to generate_content_with_failover raises DualKeyQuotaExhaustedError
+    raised_dual = False
+    try:
+        bmain.generate_content_with_failover(
+            client=mock_primary,
+            model="gemini-3.6-flash",
+            contents="test prompt",
+            call_name="test_dual_exhaustion",
+        )
+    except bmain.DualKeyQuotaExhaustedError as e:
+        raised_dual = True
+        assert e.code == 429
+        assert e.primary_exc == err_429
+        assert e.backup_exc == err_429
+
+    assert raised_dual is True, "DualKeyQuotaExhaustedError must be raised when both keys fail with 429"
+    assert mock_primary.models.generate_content.call_count == 1
+    assert mock_backup.models.generate_content.call_count == 1
+
+    # 7b. extract_goals aborts immediately on attempt 1 without schema retries or backoff sleep
+    mock_primary.reset_mock()
+    mock_backup.reset_mock()
+    import time
+    start_t = time.perf_counter()
+
+    goals, usage = bmain.extract_goals(
+        query="battery drains rapidly",
+        client=mock_primary,
+        max_retries=2,
+    )
+    elapsed_ms = (time.perf_counter() - start_t) * 1000
+
+    assert goals == [], "Must return empty goals on dual exhaustion"
+    # Crucial assertion: exactly 1 call per client (2 calls total), NOT 6 calls across 3 retries!
+    assert mock_primary.models.generate_content.call_count == 1, (
+        f"Primary must be called exactly 1 time, got {mock_primary.models.generate_content.call_count}"
+    )
+    assert mock_backup.models.generate_content.call_count == 1, (
+        f"Backup must be called exactly 1 time, got {mock_backup.models.generate_content.call_count}"
+    )
+    assert elapsed_ms < 500, f"Must fail fast with zero backoff sleep, took {elapsed_ms:.1f}ms"
+    print(
+        f"[PASS] Test 7: Both-keys-exhausted triggers immediate fail-fast "
+        f"(2 calls total, {elapsed_ms:.2f}ms latency, 0 schema retries consumed)"
+    )
+
     print("\n" + "=" * 75)
     print("ALL DUAL-KEY FAILOVER TESTS PASSED SUCCESSFULLY!")
     print("=" * 75)

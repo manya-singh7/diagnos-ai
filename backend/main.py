@@ -137,6 +137,17 @@ def _is_quota_exhausted(exc: Exception) -> bool:
     return False
 
 
+class DualKeyQuotaExhaustedError(RuntimeError):
+    """Raised specifically when both primary and backup Gemini API keys fail with 429 RESOURCE_EXHAUSTED."""
+    code: int = 429
+
+    def __init__(self, message: str, primary_exc: Exception, backup_exc: Exception):
+        super().__init__(message)
+        self.code = 429
+        self.primary_exc = primary_exc
+        self.backup_exc = backup_exc
+
+
 def generate_content_with_failover(
     client: Optional[Any],
     model: str,
@@ -152,6 +163,7 @@ def generate_content_with_failover(
     and bubble up immediately to the caller's existing retry/backoff handlers.
 
     Logs clearly which key (primary or backup) actually served each successful request.
+    If both keys fail with 429, raises DualKeyQuotaExhaustedError for immediate fail-fast handling.
     """
     primary = client if client is not None else (gemini_client_primary or gemini_client)
     if primary is None:
@@ -191,6 +203,13 @@ def generate_content_with_failover(
                     call_name,
                     backup_exc,
                 )
+                if _is_quota_exhausted(backup_exc):
+                    raise DualKeyQuotaExhaustedError(
+                        f"[{call_name}] Both primary and backup Gemini API keys exhausted (429 RESOURCE_EXHAUSTED). "
+                        f"Primary: {primary_exc} | Backup: {backup_exc}",
+                        primary_exc=primary_exc,
+                        backup_exc=backup_exc,
+                    )
                 raise backup_exc
 
         # If not 429, or backup client is not configured, re-raise immediately
@@ -946,6 +965,15 @@ def extract_goals(
             validated_goals.sort(key=lambda g: g.score, reverse=True)
             return validated_goals[:max_goals], token_usage
 
+        except DualKeyQuotaExhaustedError as e:
+            logger.warning(
+                "Both Gemini API keys exhausted quota (429 RESOURCE_EXHAUSTED) on attempt %d/%d. "
+                "Immediately aborting extraction loop with fail-fast (0 schema retries consumed): %s",
+                attempt + 1,
+                max_retries + 1,
+                e,
+            )
+            return [], token_usage
         except Exception as e:
             error_msg = str(e)
             err_lower = error_msg.lower()
